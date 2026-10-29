@@ -255,3 +255,8 @@ details summary { cursor: pointer; margin: 6px 0; }
 .pend-block .seg { margin-bottom: 4px; }
 select.inp { appearance: auto; }
 .sheet .btn.wide { text-align: left; }
+
+.frow .switch { margin-left: 2px; }
+.chapter-off .lmain { opacity: 0.45; filter: grayscale(1); }
+
+.sidemark { font-size: 17px; font-weight: 400; color: var(--muted); }

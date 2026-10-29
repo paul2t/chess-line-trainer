@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import Library from './Library.vue';
 import Trainer from './Trainer.vue';
 import PositionSearch from './PositionSearch.vue';
-import { state, allLines, recordAttempt, exportBackup, importBackup, storageError, type Mode } from './store';
+import { state, allLines, isOff, recordAttempt, exportBackup, importBackup, storageError, type Mode } from './store';
 import { cloud, saveFile, flush } from './cloud';
 import { confirmState, answerConfirm, askConfirm } from './confirm';
 import { playSound } from './sound';
@@ -187,7 +187,7 @@ const summary = computed(() => {
 });
 
 function drillToday() {
-  const ids = [...allLines.value.keys()].filter((id) => !state.disabled[id] && state.stats[id]?.lm && new Date(state.stats[id].lm).toDateString() === new Date().toDateString());
+  const ids = [...allLines.value.keys()].filter((id) => !isOff(id) && state.stats[id]?.lm && new Date(state.stats[id].lm).toDateString() === new Date().toDateString());
   if (ids.length) start('today', ids, {}, session.origin);
 }
 

@@ -15,7 +15,7 @@
  *                       migrate a chapter that has no h_ document yet — they stay as a backup.
  */
 import { reactive, watch } from 'vue';
-import { state, applying, migrateFile, type LineStat, type PgnFile, type Settings, type Chapter, type StoredLine } from './store';
+import { state, applying, migrateFile, normalizeChapters, type LineStat, type PgnFile, type Settings, type Chapter, type StoredLine } from './store';
 
 export type CloudStatus = 'local' | 'connecting' | 'synced' | 'saving' | 'error' | 'signedout';
 export const cloud = reactive({ status: 'local' as CloudStatus, message: '', canDownload: false });
@@ -62,7 +62,7 @@ function buildDocs(): Map<string, Record<string, unknown>> {
   for (const c of state.chapters) {
     const text = JSON.stringify(c.lines);
     const n = Math.max(1, Math.ceil(text.length / CHUNK));
-    docs.set('h_' + c.id, { id: c.id, name: c.name, color: c.color, added: c.added, updated: c.updated, chunks: n });
+    docs.set('h_' + c.id, { id: c.id, name: c.name, color: c.color, disabled: !!c.disabled, added: c.added, updated: c.updated, chunks: n });
     for (let i = 0; i < n; i++) docs.set(`l_${c.id}_${i}`, { t: text.slice(i * CHUNK, (i + 1) * CHUNK) });
   }
   return docs;
@@ -80,7 +80,9 @@ function remoteChapter(remote: Map<string, Record<string, unknown>>, id: string)
   if (h) {
     const text = Array.from({ length: h.chunks }, (_, i) => (remote.get(`l_${id}_${i}`)?.t as string) ?? '').join('');
     try {
-      return { id, name: h.name, color: h.color, added: h.added, updated: h.updated, lines: JSON.parse(text) as StoredLine[] };
+      const c: Chapter = { id, name: h.name, color: h.color, added: h.added, updated: h.updated, lines: JSON.parse(text) as StoredLine[] };
+      if (h.disabled) c.disabled = true;
+      return c;
     } catch {
       return null;
     }
@@ -144,6 +146,7 @@ async function pull() {
     // chapters deleted on another device
     const keep = state.chapters.filter((c) => (state.deletedChapters[c.id] ?? 0) < c.updated);
     if (keep.length !== state.chapters.length) state.chapters = keep;
+    normalizeChapters(state.chapters); // one side per chapter (older data may mix them)
 
     // --- stats: per line, the most recent review wins
     for (const [k, v] of remote) {

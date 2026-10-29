@@ -5,7 +5,7 @@ const { chromium } = require('playwright'); const path = require('path');
   const errs = []; page.on('pageerror', e => errs.push(e.message));
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Per game")'); await page.click('.modal .btn.primary');
+  await page.click('.seg button:has-text("Split by side")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(3800);
   console.log('warning:', await page.locator('.warnhead').innerText());
   await page.click('.warnhead'); await page.waitForTimeout(200);
@@ -25,6 +25,7 @@ const { chromium } = require('playwright'); const path = require('path');
   console.log('warnings left:', await page.locator('.warncard').count());
   await page.screenshot({ path: 'test/14-conflict.png', fullPage: true });
   // multi mistakes on first Najdorf line
+  await page.locator('.frow:has-text("(White)") .switch span').click(); await page.waitForTimeout(150); // White chapter off
   await page.click('text=All in order'); await page.waitForTimeout(1100);
   const sq = async (k) => { const b = await page.locator('cg-board').boundingBox(); const f=k.charCodeAt(0)-97, r=+k[1], s=b.width/8; return { x:b.x+(7-f+0.5)*s, y:b.y+(r-0.5)*s }; };
   const move = async (u) => { const a=await sq(u.slice(0,2)), c=await sq(u.slice(2,4)); await page.mouse.click(a.x,a.y); await page.waitForTimeout(60); await page.mouse.click(c.x,c.y); await page.waitForTimeout(800); };

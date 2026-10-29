@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import {
-  state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setLineColor,
+  state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setChapterDisabled, moveLine, createChapter, isOff,
   priority, isToday, lineBadge, relDay, recentErrors, setDisabled, guessColor, conflicts, conflictPosition,
   type Conflict, type LibChapter, type LibEntry, type Mode, type Chapter,
 } from './store';
@@ -21,7 +21,7 @@ const open = reactive(new Set<string>());
 const toggleOpen = (k: string) => (open.has(k) ? open.delete(k) : open.add(k));
 
 const sel = computed(() => new Set(state.selection));
-const enabledIds = (ids: string[]) => ids.filter((id) => !state.disabled[id] && allLines.value.has(id));
+const enabledIds = (ids: string[]) => ids.filter((id) => !isOff(id) && allLines.value.has(id));
 
 /** Trainable line ids of a chapter (lines where you have at least one move). */
 function chapterIds(c: LibChapter): string[] {
@@ -130,7 +130,7 @@ function counts(ids: string[]) {
   const t = now.value;
   let due = 0, off = 0, bad = 0;
   for (const id of ids) {
-    if (state.disabled[id]) { off++; continue; }
+    if (isOff(id)) { off++; continue; }
     const st = state.stats[id];
     if (priority(st, t) > 0) due++;
     if (st && isToday(st.lm, t) && !st.lc) bad++;
@@ -174,9 +174,9 @@ function statText(id: string): string {
 function toggleLine(id: string) {
   setDisabled([id], !state.disabled[id]);
 }
-/** True when every trainable line in the group is disabled. */
+/** True when every trainable line in the group is switched off (by itself or by its chapter). */
 function allOff(ids: string[]) {
-  return ids.length > 0 && ids.every((id) => state.disabled[id]);
+  return ids.length > 0 && ids.every((id) => isOff(id));
 }
 function anyOn(ids: string[]) {
   return ids.some((id) => !state.disabled[id]);
@@ -213,8 +213,8 @@ function pasteNext() {
 function confirmImport() {
   const msgs = pending.value.map((p) => {
     const r = importPgn(p.text, p.target === 'new' ? { kind: 'new', name: p.name.trim() || 'Chapter', color: p.color } : { kind: 'existing', chapterId: p.target });
-    open.add(r.chapter.id);
-    return `${r.chapter.name}: ${r.added} line(s) added${r.skipped ? `, ${r.skipped} already there` : ''}`;
+    r.chapters.forEach((c) => open.add(c.id));
+    return `${r.chapters.map((c) => c.name).join(' + ')}: ${r.added} line(s) added${r.skipped ? `, ${r.skipped} already there` : ''}`;
   });
   pending.value = [];
   now.value = Date.now();
@@ -225,17 +225,18 @@ function setAllPending(c: Color | 'auto') {
 }
 
 /* ---------- chapter & line actions ---------- */
-function chapterColor(c: LibChapter): Color | 'mixed' {
-  const cs = new Set(c.lines.map((e) => e.color));
-  return cs.size > 1 ? 'mixed' : cs.size ? [...cs][0] : c.chapter.color;
-}
-const menu = ref<null | { kind: 'chapter'; c: LibChapter } | { kind: 'line'; c: LibChapter; e: LibEntry }>(null);
+const menu = ref<null | { kind: 'chapter'; c: LibChapter } | { kind: 'line'; c: LibChapter; e: LibEntry } | { kind: 'move'; c: LibChapter; e: LibEntry }>(null);
 async function delChapter(c: LibChapter) {
   menu.value = null;
   if (await askConfirm(`Delete chapter "${c.chapter.name}"?`, `Its ${c.lines.length} line(s) are removed. Progress is kept in case you import them again.`, 'Delete')) {
     removeChapter(c.chapter.id);
     state.selection = state.selection.filter((id) => allLines.value.has(id));
   }
+}
+function switchSide(c: LibChapter) {
+  menu.value = null;
+  setChapterColor(c.chapter, c.chapter.color === 'w' ? 'b' : 'w');
+  emit('toast', `You now play ${c.chapter.color === 'w' ? 'White' : 'Black'} in “${c.chapter.name}”`);
 }
 async function renameCh(c: LibChapter) {
   menu.value = null;
@@ -258,9 +259,19 @@ async function delLine(c: LibChapter, e: LibEntry) {
     state.selection = state.selection.filter((id) => allLines.value.has(id));
   }
 }
-function lineSide(c: LibChapter, e: LibEntry, color: Color) {
+/** Move a line to another chapter (also how a line changes side). */
+function moveTo(c: LibChapter, e: LibEntry, targetId: string) {
   menu.value = null;
-  setLineColor(c.chapter, e.stored.id, color);
+  const to = state.chapters.find((x) => x.id === targetId);
+  if (!to) return;
+  moveLine(c.chapter, e.stored.id, to);
+  open.add(to.id);
+  emit('toast', `Moved to “${to.name}”${to.color !== c.chapter.color ? ` — now trained as ${to.color === 'w' ? 'White' : 'Black'}` : ''}`);
+}
+async function moveToNew(c: LibChapter, e: LibEntry, color: Color) {
+  const name = await askText(`New ${color === 'w' ? 'White' : 'Black'} chapter`, `${c.chapter.name} (${color === 'w' ? 'White' : 'Black'})`, 'Create');
+  if (!name) return;
+  moveTo(c, e, createChapter(name, color).id);
 }
 function copyLine(c: LibChapter, e: LibEntry) {
   menu.value = null;
@@ -431,10 +442,10 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
             <div class="seg">
               <button :class="{ on: p.color === 'w' }" @click="p.color = 'w'">♔ White</button>
               <button :class="{ on: p.color === 'b' }" @click="p.color = 'b'">♚ Black</button>
-              <button v-if="p.mixed" :class="{ on: p.color === 'auto' }" @click="p.color = 'auto'" title="Games look like a mix of White and Black repertoires">Per game</button>
+              <button v-if="p.mixed" :class="{ on: p.color === 'auto' }" @click="p.color = 'auto'" title="Games look like a mix of White and Black repertoires: one chapter per side">Split by side</button>
             </div>
           </template>
-          <p v-else class="small muted">Lines take the chapter's side; lines already in it are skipped.</p>
+          <p v-else class="small muted">You play {{ state.chapters.find((x) => x.id === p.target)?.color === 'w' ? 'White' : 'Black' }} in that chapter; lines already in it are skipped.</p>
         </div>
         <div class="row2">
           <button class="btn wide" @click="pending = []">Cancel</button>
@@ -448,15 +459,24 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         <template v-if="menu.kind === 'chapter'">
           <h3>{{ menu.c.chapter.name }}</h3>
           <button class="btn wide" @click="renameCh(menu.c)">✎ Rename</button>
+          <button class="btn wide" @click="switchSide(menu.c)">{{ menu.c.chapter.color === 'w' ? '♚ Play Black in this chapter' : '♔ Play White in this chapter' }}</button>
           <button class="btn wide" @click="copyChapter(menu.c)">⧉ Copy as PGN</button>
           <button class="btn wide danger" @click="delChapter(menu.c)">🗑 Delete chapter</button>
         </template>
-        <template v-else>
+        <template v-else-if="menu.kind === 'line'">
           <h3>{{ menu.e.stored.title }}</h3>
           <button class="btn wide" @click="renameLn(menu.c, menu.e)">✎ Rename</button>
-          <button class="btn wide" @click="lineSide(menu.c, menu.e, menu.e.color === 'w' ? 'b' : 'w')">Train as {{ menu.e.color === 'w' ? '♚ Black' : '♔ White' }}</button>
+          <button class="btn wide" @click="menu = { kind: 'move', c: menu.c, e: menu.e }">↪ Move to chapter…</button>
           <button class="btn wide" @click="copyLine(menu.c, menu.e)">⧉ Copy as PGN</button>
           <button class="btn wide danger" @click="delLine(menu.c, menu.e)">🗑 Delete line</button>
+        </template>
+        <template v-if="menu.kind === 'move'">
+          <h3>Move “{{ menu.e.stored.title }}” to</h3>
+          <button v-for="ch in state.chapters.filter((x) => x.id !== menu!.c.chapter.id)" :key="ch.id" class="btn wide" @click="moveTo(menu!.c, menu!.e, ch.id)">
+            {{ ch.color === 'w' ? '♔' : '♚' }} {{ ch.name }}
+          </button>
+          <button class="btn wide" @click="moveToNew(menu.c, menu.e, 'w')">➕ New White chapter…</button>
+          <button class="btn wide" @click="moveToNew(menu.c, menu.e, 'b')">➕ New Black chapter…</button>
         </template>
         <button class="btn wide" @click="menu = null">Close</button>
       </div>
@@ -468,10 +488,10 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
     </div>
 
     <section v-for="c in library" :key="c.chapter.id" class="card file">
-      <div :class="['frow', { off: allOff(chapterIds(c)) }]">
+      <div :class="['frow', { off: c.chapter.disabled || allOff(chapterIds(c)) }]">
         <span :class="['cb', selState(chapterIds(c))]" @click="toggleSel(chapterIds(c))"></span>
         <div class="fmain" @click="toggleOpen(c.chapter.id)">
-          <div class="fname">{{ c.chapter.name }}<span v-if="allOff(chapterIds(c))" class="badge b-off">off</span></div>
+          <div class="fname"><span class="sidemark" :title="c.chapter.color === 'w' ? 'You play White' : 'You play Black'">{{ c.chapter.color === 'w' ? '♔' : '♚' }}</span> {{ c.chapter.name }}<span v-if="c.chapter.disabled || allOff(chapterIds(c))" class="badge b-off">off</span></div>
           <div class="fmeta">
             {{ c.lines.length }} line{{ c.lines.length === 1 ? '' : 's' }}
             <template v-for="cc in [counts(chapterIds(c))]" :key="0">
@@ -481,23 +501,24 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
             </template>
           </div>
         </div>
-        <div class="side">
-          <button :class="['sideb', { on: chapterColor(c) === 'w', mixed: chapterColor(c) === 'mixed' }]" @click="setChapterColor(c.chapter, 'w')" title="Whole chapter as White">♔</button>
-          <button :class="['sideb', { on: chapterColor(c) === 'b', mixed: chapterColor(c) === 'mixed' }]" @click="setChapterColor(c.chapter, 'b')" title="Whole chapter as Black">♚</button>
-        </div>
+        <label class="switch" :title="c.chapter.disabled ? 'Enable chapter' : 'Disable chapter'">
+          <input type="checkbox" :checked="!c.chapter.disabled" @change="setChapterDisabled(c.chapter, !c.chapter.disabled)" />
+          <span></span>
+        </label>
         <button class="icon dots" @click="menu = { kind: 'chapter', c }" aria-label="Chapter actions">⋯</button>
         <span class="chev" @click="toggleOpen(c.chapter.id)">{{ open.has(c.chapter.id) ? '▾' : '▸' }}</span>
       </div>
 
-      <div v-if="open.has(c.chapter.id)" class="lines">
+      <div v-if="open.has(c.chapter.id)" :class="['lines', { 'chapter-off': c.chapter.disabled }]">
+        <div v-if="c.chapter.disabled" class="small muted">Chapter switched off: none of its lines is trained. The lines' own switches are kept for when you turn it back on.</div>
         <div class="lines-tools" v-if="chapterIds(c).length">
           <a href="#" @click.prevent="toggleGameEnabled(chapterIds(c))">{{ anyOn(chapterIds(c)) ? 'Disable all lines' : 'Enable all lines' }}</a>
         </div>
-        <div v-for="r in rows(c)" :key="r.id + r.e.stored.title" :class="['lrow', { off: state.disabled[r.id], untrainable: !r.trainable }]">
+        <div v-for="r in rows(c)" :key="r.id + r.e.stored.title" :class="['lrow', { off: state.disabled[r.id] || c.chapter.disabled, untrainable: !r.trainable }]">
           <span v-if="r.trainable" :class="['cb', sel.has(r.id) ? 'all' : 'none']" @click="toggleSel([r.id])"></span>
           <span v-else class="cb-sp"></span>
           <div class="lmain" @click="r.trainable && toggleSel([r.id])">
-            <div class="ltitle">{{ r.e.stored.title }}<span v-if="r.e.color !== c.chapter.color" class="muted"> · as {{ r.e.color === 'w' ? 'White' : 'Black' }}</span></div>
+            <div class="ltitle">{{ r.e.stored.title }}</div>
             <div class="ltext"><span class="lpre">{{ r.prefix }}</span> {{ r.rest }}</div>
             <div class="lstat" v-if="r.trainable">
               <span v-if="state.disabled[r.id]" class="badge b-off">off</span>

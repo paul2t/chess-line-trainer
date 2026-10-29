@@ -4,7 +4,7 @@ import { Chess, type Square } from 'chess.js';
 import type { Key } from 'chessground/types';
 import Board from './Board.vue';
 import { DEFAULT_FEN, parsePgn, posKey, moveTokens, lichessUrl, type Color } from './pgn';
-import { state, allLines, lineBadge, addLine, createChapter, type LibLine } from './store';
+import { state, allLines, lineBadge, addLine, createChapter, isOff, type LibLine } from './store';
 import { playSound } from './sound';
 import { searchMemory, rememberSearch } from './searchMemory';
 import { explorer as lichessData, moveGames, fmtGames, lichess as lichessState } from './lichess';
@@ -180,7 +180,7 @@ function userMovesAfter(it: LibLine, ply: number): boolean {
 /** When set, the board/explorer only considers these lines (from "Explore these lines"). */
 const scope = ref<Set<string> | null>(null);
 const inactiveLast = <T extends { item: LibLine }>(arr: T[]) =>
-  arr.map((h, i) => ({ h, i })).sort((a, b) => Number(!!state.disabled[a.h.item.line.id]) - Number(!!state.disabled[b.h.item.line.id]) || a.i - b.i).map((x) => x.h);
+  arr.map((h, i) => ({ h, i })).sort((a, b) => Number(!!isOff(a.h.item.line.id)) - Number(!!isOff(b.h.item.line.id)) || a.i - b.i).map((x) => x.h);
 
 const key = computed(() => posKey(fen.value));
 const hits = computed<Hit[]>(() => {
@@ -193,7 +193,7 @@ const hits = computed<Hit[]>(() => {
   }
   return inactiveLast(out);
 });
-const trainable = computed(() => hits.value.filter((h) => !state.disabled[h.item.line.id] && (!fromHere.value || h.userLeft)));
+const trainable = computed(() => hits.value.filter((h) => !isOff(h.item.line.id) && (!fromHere.value || h.userLeft)));
 
 /* ---------- explorer: opponent moves and your answers ---------- */
 interface Reply { uci: string; san: string; n: number }
@@ -208,7 +208,7 @@ const replyLabel = (san: string) => (sideToMove.value === 'w' ? san : `${moveNum
 const explorer = computed<Group[]>(() => {
   const groups: Group[] = [];
   for (const c of ['w', 'b'] as Color[]) {
-    const hs = hits.value.filter((h) => h.item.color === c && !state.disabled[h.item.line.id]);
+    const hs = hits.value.filter((h) => h.item.color === c && !isOff(h.item.line.id));
     if (!hs.length) continue;
     const rows = new Map<string, Row>();
     for (const h of hs) {
@@ -267,7 +267,7 @@ function onTarget() {
 function saveAdd() {
   const a = adding.value!;
   const ch = a.target === 'new' ? createChapter(a.newName.trim() || 'My lines', a.color) : state.chapters.find((c) => c.id === a.target)!;
-  const ok = addLine(ch.id, a.title.trim() || 'New line', startFen.value, history.value.slice(0, cursor.value).map((h) => h.uci), a.color);
+  const ok = addLine(ch.id, a.title.trim() || 'New line', startFen.value, history.value.slice(0, cursor.value).map((h) => h.uci));
   searchMemory.lastChapter = ch.id;
   adding.value = null;
   emit('toast', ok ? `Line added to “${ch.name}”` : `“${ch.name}” already has this line`);
@@ -287,7 +287,7 @@ const branchMaps = computed(() => {
   const theirs = new Map<string, Set<string>>();
   const mine = new Map<string, Set<string>>();
   for (const it of allLines.value.values()) {
-    if (state.disabled[it.line.id] || !colorOk(it)) continue;
+    if (isOff(it.line.id) || !colorOk(it)) continue;
     if (scope.value && !scope.value.has(it.line.id)) continue;
     const mv = it.line.moves;
     for (let i = 0; i < mv.length; i++) {
@@ -354,7 +354,7 @@ const moveHits = computed<MoveHit[]>(() => {
   return inactiveLast(out);
 });
 const moveTrainable = computed(() =>
-  moveHits.value.filter((h) => !state.disabled[h.item.line.id] && (!fromFirst.value || userMovesAfter(h.item, h.first))),
+  moveHits.value.filter((h) => !isOff(h.item.line.id) && (!fromFirst.value || userMovesAfter(h.item, h.first))),
 );
 
 /** Load a whole line on the board, positioned after `cursorPly` moves (step through it with ‹ ›). */
@@ -368,11 +368,11 @@ function openLine(it: LibLine, cursorPly: number) {
 }
 const openAt = (h: MoveHit) => openLine(h.item, h.first);
 
-const foundActive = computed(() => moveHits.value.filter((h) => !state.disabled[h.item.line.id]).length);
+const foundActive = computed(() => moveHits.value.filter((h) => !isOff(h.item.line.id)).length);
 
 /** Explore only the active lines found by the moves search, as a tree from the start. */
 function exploreFound() {
-  const act = moveHits.value.filter((h) => !state.disabled[h.item.line.id]);
+  const act = moveHits.value.filter((h) => !isOff(h.item.line.id));
   if (!act.length) return emit('toast', 'No active line to explore.');
   scope.value = new Set(act.map((h) => h.item.line.id));
   const colors = new Set(act.map((h) => h.item.color));
@@ -553,12 +553,12 @@ onMounted(() => {
           <button class="btn primary wide" @click="trainPosition" :disabled="!trainable.length">Train {{ trainable.length }}</button>
           <button class="btn wide" @click="selectIds(hits.map((h) => h.item.line.id))" :disabled="!hits.length">Select in library</button>
         </div>
-        <div v-for="h in hits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: state.disabled[h.item.line.id] }]">
+        <div v-for="h in hits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: isOff(h.item.line.id) }]">
           <div class="lmain" @click="openLine(h.item, h.ply)">
             <div class="small muted">{{ h.item.chapter.name }} · {{ h.item.title }} · <span class="tap">step through ›</span></div>
             <div class="ltext"><span v-for="(t, i) in tokens(h.item, h.ply)" :key="i" :class="t.cls">{{ t.t + ' ' }}</span></div>
             <div class="lstat">
-              <span v-if="state.disabled[h.item.line.id]" class="badge b-off">off</span>
+              <span v-if="isOff(h.item.line.id)" class="badge b-off">off</span>
               <span v-else :class="['badge', lineBadge(state.stats[h.item.line.id]).cls]">{{ lineBadge(state.stats[h.item.line.id]).text }}</span>
             </div>
           </div>
@@ -579,14 +579,17 @@ onMounted(() => {
           <option value="new">➕ New chapter</option>
           <option v-for="c in state.chapters" :key="c.id" :value="c.id">{{ c.name }}</option>
         </select>
-        <input v-if="adding.target === 'new'" class="inp" v-model="adding.newName" placeholder="Chapter name" />
-        <div class="colorpick">
-          You play
-          <div class="seg">
-            <button :class="{ on: adding.color === 'w' }" @click="adding.color = 'w'">♔ White</button>
-            <button :class="{ on: adding.color === 'b' }" @click="adding.color = 'b'">♚ Black</button>
+        <template v-if="adding.target === 'new'">
+          <input class="inp" v-model="adding.newName" placeholder="Chapter name" />
+          <div class="colorpick">
+            You play
+            <div class="seg">
+              <button :class="{ on: adding.color === 'w' }" @click="adding.color = 'w'">♔ White</button>
+              <button :class="{ on: adding.color === 'b' }" @click="adding.color = 'b'">♚ Black</button>
+            </div>
           </div>
-        </div>
+        </template>
+        <p v-else class="small muted">You play {{ adding.color === 'w' ? 'White' : 'Black' }} in this chapter.</p>
         <div class="row2">
           <button class="btn wide" @click="adding = null">Cancel</button>
           <button class="btn primary wide" @click="saveAdd">Add</button>
@@ -619,12 +622,12 @@ onMounted(() => {
           <button class="btn wide" @click="selectIds(moveHits.map((h) => h.item.line.id))" :disabled="!moveHits.length">Select in library</button>
         </div>
         <button class="btn wide" @click="exploreFound" :disabled="!foundActive">🔍 Explore these lines</button>
-        <div v-for="h in moveHits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: state.disabled[h.item.line.id] }]">
+        <div v-for="h in moveHits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: isOff(h.item.line.id) }]">
           <div class="lmain" @click="openAt(h)">
             <div class="small muted">{{ h.item.chapter.name }} · {{ h.item.title }}</div>
             <div class="ltext"><span v-for="(t, i) in tokens(h.item, 0, h.plies)" :key="i" :class="t.cls">{{ t.t + ' ' }}</span></div>
             <div class="lstat">
-              <span v-if="state.disabled[h.item.line.id]" class="badge b-off">off</span>
+              <span v-if="isOff(h.item.line.id)" class="badge b-off">off</span>
               <span v-else :class="['badge', lineBadge(state.stats[h.item.line.id]).cls]">{{ lineBadge(state.stats[h.item.line.id]).text }}</span>
               <span class="muted">tap to open on the board</span>
             </div>

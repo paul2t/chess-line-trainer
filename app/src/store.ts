@@ -23,7 +23,8 @@ export interface PgnFile {
 export interface StoredLine {
   id: string;
   title: string;
-  color: Color;
+  /** Legacy (before one side per chapter): only read by normalizeChapters, which removes it. */
+  color?: Color;
   /** Start position, omitted for the standard start. */
   fen?: string;
   /** Moves in UCI, space separated. */
@@ -36,8 +37,10 @@ export interface StoredLine {
 export interface Chapter {
   id: string;
   name: string;
-  /** Default side for new lines of this chapter. */
+  /** The side you play in every line of this chapter. */
   color: Color;
+  /** Chapter switched off: its lines aren't trained, whatever their own on/off state. */
+  disabled?: boolean;
   lines: StoredLine[];
   added: number;
   updated: number;
@@ -108,10 +111,11 @@ export const newId = () => Math.random().toString(36).slice(2, 10);
 /* ---------- migration v1 (files → chapters → lines) to v2 (chapters → lines) ---------- */
 
 /** A line as stored, from a parsed line. */
-function storeLine(l: Line, title: string, color: Color): StoredLine {
+function storeLine(l: Line, title: string, color?: Color): StoredLine {
   const comments: Record<number, string> = {};
   l.moves.forEach((m, i) => { if (m.comment) comments[i] = m.comment; });
-  const sl: StoredLine = { id: l.id, title, color, moves: l.moves.map((m) => m.uci).join(' ') };
+  const sl: StoredLine = { id: l.id, title, moves: l.moves.map((m) => m.uci).join(' ') };
+  if (color) sl.color = color;
   if (posKey(l.startFen) !== posKey(DEFAULT_FEN)) sl.fen = l.startFen;
   if (Object.keys(comments).length) sl.comments = comments;
   return sl;
@@ -150,7 +154,39 @@ function initialChapters(): Chapter[] {
     if (out.some((c) => c.id === f.id) || deleted[f.id]) continue;
     try { out.push(migrateFile(f)); } catch (e) { console.error('migration failed for', f.name, e); }
   }
+  normalizeChapters(out);
   return out;
+}
+
+const SIDE_NAME: Record<Color, string> = { w: 'White', b: 'Black' };
+
+/**
+ * One side per chapter: lines whose (legacy) side differs from their chapter's move to a sibling
+ * chapter "<name> (White|Black)" with a stable id (<id>-w / <id>-b), so every device splits the same
+ * way. Nothing is dropped. Returns true if anything changed.
+ */
+export function normalizeChapters(chs: Chapter[]): boolean {
+  let changed = false;
+  for (const c of [...chs]) {
+    for (const color of ['w', 'b'] as Color[]) {
+      if (color === c.color) continue;
+      const moving = c.lines.filter((l) => l.color && l.color !== c.color && l.color === color);
+      if (!moving.length) continue;
+      const sid = `${c.id}-${color}`;
+      let sib = chs.find((x) => x.id === sid);
+      if (!sib) {
+        sib = { id: sid, name: `${c.name} (${SIDE_NAME[color]})`, color, lines: [], added: c.added, updated: Date.now(), disabled: c.disabled };
+        chs.splice(chs.indexOf(c) + 1, 0, sib);
+      }
+      const have = new Set(sib.lines.map((l) => l.id));
+      for (const l of moving) if (!have.has(l.id)) sib.lines.push(l);
+      c.lines = c.lines.filter((l) => !moving.includes(l));
+      c.updated = sib.updated = Date.now();
+      changed = true;
+    }
+  }
+  for (const c of chs) for (const l of c.lines) if ('color' in l) { delete l.color; changed = true; }
+  return changed;
 }
 
 export const state = reactive({
@@ -199,7 +235,7 @@ export const library = computed<LibChapter[]>(() =>
     chapter,
     lines: chapter.lines.map((stored) => {
       const line = built(stored);
-      return { stored, line, color: stored.color, trainable: userPlies(line, stored.color) > 0 };
+      return { stored, line, color: chapter.color, trainable: userPlies(line, chapter.color) > 0 };
     }),
   })),
 );
@@ -207,13 +243,22 @@ export const library = computed<LibChapter[]>(() =>
 /** All trainable lines, deduplicated by id (same moves = same line, wherever it appears). */
 export const allLines = computed<Map<string, LibLine>>(() => {
   const m = new Map<string, LibLine>();
-  for (const lc of library.value)
-    lc.lines.forEach((e, lineIndex) => {
-      if (m.has(e.line.id) || !e.trainable) return;
-      m.set(e.line.id, { line: e.line, color: e.color, chapter: lc.chapter, title: e.stored.title, lineIndex });
-    });
+  // Enabled chapters first: a line also present in a switched-off chapter stays active.
+  for (const pass of [false, true])
+    for (const lc of library.value) {
+      if (!!lc.chapter.disabled !== pass) continue;
+      lc.lines.forEach((e, lineIndex) => {
+        if (m.has(e.line.id) || !e.trainable) return;
+        m.set(e.line.id, { line: e.line, color: e.color, chapter: lc.chapter, title: e.stored.title, lineIndex });
+      });
+    }
   return m;
 });
+
+/** A line is off when you switched it off, or when its chapter is off. */
+export function isOff(id: string): boolean {
+  return !!state.disabled[id] || !!allLines.value.get(id)?.chapter.disabled;
+}
 
 export function userPlies(line: Line, color: Color): number {
   const startWhite = line.startFen.split(' ')[1] !== 'b';
@@ -229,7 +274,7 @@ export function userPlies(line: Line, color: Color): number {
 export function userMovesAt(key: string, color: Color): Set<string> {
   const out = new Set<string>();
   for (const it of allLines.value.values()) {
-    if (it.color !== color || state.disabled[it.line.id]) continue;
+    if (it.color !== color || isOff(it.line.id)) continue;
     const i = it.line.keys.indexOf(key);
     if (i >= 0 && i < it.line.moves.length) out.add(it.line.moves[i].uci);
   }
@@ -277,35 +322,45 @@ export type ImportTarget = { kind: 'new'; name: string; color: Color | 'auto' } 
  * Import a PGN: each game becomes a line titled with its Event (games with variations are split
  * into one line per variation). Lines already in the chapter are skipped.
  */
-export function importPgn(text: string, target: ImportTarget): { chapter: Chapter; added: number; skipped: number; games: number } {
+export function importPgn(text: string, target: ImportTarget): { chapter: Chapter; chapters: Chapter[]; added: number; skipped: number; games: number } {
   const parts = pgnToLines(text);
   const games = parsePgn(text);
-  let ch: Chapter;
-  if (target.kind === 'existing') ch = state.chapters.find((c) => c.id === target.chapterId)!;
-  else {
-    const black = games.filter((g) => g.guessedColor === 'b').length;
-    ch = createChapter(target.name, target.color === 'auto' ? (black > games.length / 2 ? 'b' : 'w') : target.color);
-  }
-  const auto = target.kind === 'new' && target.color === 'auto';
-  const have = new Set(ch.lines.map((l) => l.id));
+  // 'auto' = split by side: one chapter per side found in the games.
+  const groups: { color: Color | null; parts: typeof parts }[] =
+    target.kind === 'new' && target.color === 'auto'
+      ? (['w', 'b'] as Color[]).map((c) => ({ color: c, parts: parts.filter((p) => p.game.guessedColor === c) })).filter((g) => g.parts.length)
+      : [{ color: null, parts }];
+  let first: Chapter | null = null;
+  const used: Chapter[] = [];
   let added = 0, skipped = 0;
-  for (const p of parts) {
-    if (have.has(p.line.id)) { skipped++; continue; }
-    have.add(p.line.id);
-    ch.lines.push(storeLine(p.line, p.title, auto ? p.game.guessedColor : ch.color));
-    added++;
+  for (const g of groups) {
+    let ch: Chapter;
+    if (target.kind === 'existing') ch = state.chapters.find((c) => c.id === target.chapterId)!;
+    else {
+      const name = groups.length > 1 ? `${target.name} (${SIDE_NAME[g.color!]})` : target.name;
+      ch = createChapter(name, g.color ?? (target.color === 'auto' ? 'w' : target.color));
+    }
+    first ??= ch;
+    if (!used.includes(ch)) used.push(ch);
+    const have = new Set(ch.lines.map((l) => l.id));
+    for (const p of g.parts) {
+      if (have.has(p.line.id)) { skipped++; continue; }
+      have.add(p.line.id);
+      ch.lines.push(storeLine(p.line, p.title));
+      added++;
+    }
+    touch(ch);
   }
-  touch(ch);
-  return { chapter: ch, added, skipped, games: games.length };
+  return { chapter: first!, chapters: used, added, skipped, games: games.length };
 }
 
 /** Add one line (e.g. from the explorer). Returns false if the chapter already has it. */
-export function addLine(chapterId: string, title: string, startFen: string, ucis: string[], color: Color): boolean {
+export function addLine(chapterId: string, title: string, startFen: string, ucis: string[]): boolean {
   const ch = state.chapters.find((c) => c.id === chapterId);
   if (!ch) return false;
   const line = buildLine(startFen, ucis);
   if (ch.lines.some((l) => l.id === line.id)) return false;
-  ch.lines.push(storeLine(line, title, color));
+  ch.lines.push(storeLine(line, title));
   touch(ch);
   return true;
 }
@@ -327,15 +382,25 @@ export function renameLine(c: Chapter, lineId: string, title: string) {
   const l = c.lines.find((x) => x.id === lineId);
   if (l) { l.title = title; touch(c); }
 }
-/** Side for the whole chapter (all its lines, and new ones). */
+/** The side you play in all the chapter's lines. */
 export function setChapterColor(c: Chapter, color: Color) {
   c.color = color;
-  c.lines.forEach((l) => (l.color = color));
   touch(c);
 }
-export function setLineColor(c: Chapter, lineId: string, color: Color) {
-  const l = c.lines.find((x) => x.id === lineId);
-  if (l) { l.color = color; touch(c); }
+/** Switch a whole chapter off/on (the lines' own on/off states are kept). */
+export function setChapterDisabled(c: Chapter, off: boolean) {
+  if (off) c.disabled = true; else delete c.disabled;
+  touch(c);
+}
+/** Move a line to another chapter (that's how a line changes side). Returns false if it's already there. */
+export function moveLine(from: Chapter, lineId: string, to: Chapter): boolean {
+  const l = from.lines.find((x) => x.id === lineId);
+  if (!l || from === to) return false;
+  from.lines = from.lines.filter((x) => x !== l);
+  if (!to.lines.some((x) => x.id === lineId)) to.lines.push(l);
+  touch(from);
+  touch(to);
+  return true;
 }
 
 /* ---------- scheduling ---------- */
@@ -442,6 +507,7 @@ export function importBackup(json: string): string {
     } else { state.chapters.push({ ...c, updated: Date.now() }); nc++; }
     delete state.deletedChapters[c.id];
   }
+  normalizeChapters(state.chapters);
   let ns = 0;
   for (const [id, st] of Object.entries((data.stats ?? {}) as Record<string, LineStat>)) {
     const cur = state.stats[id];
@@ -474,7 +540,7 @@ export interface Conflict {
 export const conflicts = computed<Conflict[]>(() => {
   const m = new Map<string, Conflict>();
   for (const it of allLines.value.values()) {
-    if (state.disabled[it.line.id]) continue;
+    if (isOff(it.line.id)) continue;
     const startWhite = it.line.startFen.split(' ')[1] !== 'b';
     const mv = it.line.moves;
     for (let i = 0; i < mv.length; i++) {

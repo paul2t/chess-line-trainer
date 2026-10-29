@@ -8,7 +8,7 @@
  *   and refreshed after 30 days or when those settings change.
  */
 import { computed, reactive, shallowRef, watch } from 'vue';
-import { state, allLines, type LibLine } from './store';
+import { state, allLines, isOff, type LibLine } from './store';
 import { moveTokens, type Color } from './pgn';
 
 export const RATINGS = ['400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500'];
@@ -175,7 +175,7 @@ export function lineGames(it: LibLine): number | undefined {
 const maxLineGames = computed(() => {
   void explorerVersion.value;
   let m = 0;
-  for (const it of allLines.value.values()) if (!state.disabled[it.line.id]) m = Math.max(m, lineGames(it) ?? 0);
+  for (const it of allLines.value.values()) if (!isOff(it.line.id)) m = Math.max(m, lineGames(it) ?? 0);
   return m;
 });
 /** 0..1 on a log scale: how much the line is played compared to your most played line. */
@@ -196,7 +196,7 @@ export const missingReplies = computed<Missing[]>(() => {
   const thr = state.settings.missingThreshold / 100;
   const covered = new Map<string, { set: Set<string>; sample: { item: LibLine; ply: number } }>();
   for (const it of allLines.value.values()) {
-    if (state.disabled[it.line.id]) continue;
+    if (isOff(it.line.id)) continue;
     const startWhite = it.line.startFen.split(' ')[1] !== 'b';
     it.line.moves.forEach((m, i) => {
       const whiteMove = (i % 2 === 0) === startWhite;
@@ -234,7 +234,7 @@ interface Job { key: string; depth: number; parent?: string; uci?: string }
 function neededJobs(): Job[] {
   const seen = new Map<string, Job>();
   for (const it of allLines.value.values()) {
-    if (state.disabled[it.line.id]) continue;
+    if (isOff(it.line.id)) continue;
     const k = it.line.keys;
     for (let i = 0; i < it.line.moves.length; i++) {
       const prev = seen.get(k[i]);

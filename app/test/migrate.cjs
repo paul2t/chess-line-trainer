@@ -17,8 +17,9 @@ const { chromium } = require('playwright'); const path = require('path'); const 
   }));
   const ch = st.v2;
   console.log('chapters:', ch.map((c) => `${c.name} [${c.color}] ${c.lines.length} lines`).join(' | '));
-  const myrep = ch.find((c) => c.name === 'My repertoire');
-  console.log('lines kept:', myrep.lines.length, '/', old.expect.lines);
+  const mine = ch.filter((c) => c.name.startsWith('My repertoire'));
+  console.log('lines kept:', mine.reduce((a, c) => a + c.lines.length, 0), '/', old.expect.lines, '| one side per chapter:', ch.every((c) => c.lines.every((l) => !('color' in l))));
+  const myrep = { lines: mine.flatMap((c) => c.lines.map((l) => ({ ...l, color: c.color }))) };
   const allIds = new Set(ch.flatMap((c) => c.lines.map((l) => l.id)));
   console.log('every old line id kept:', old.expect.ids.flat().every((id) => allIds.has(id)));
   console.log('titles + sides:'); for (const l of myrep.lines) console.log('   ', l.color, l.title);
