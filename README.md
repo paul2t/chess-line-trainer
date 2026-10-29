@@ -19,8 +19,11 @@ The page is a single self-contained `index.html` built from `app/` (Vue 3 + Type
 ```sh
 cd app
 npm install
-npx vite build        # → app/dist/index.html
-cp dist/index.html ../index.html
+npm run dev      # local dev server
+npm run build    # type check + build → app/dist/index.html
 ```
+
+Every push to `main` builds and publishes the page with GitHub Actions (`.github/workflows/deploy.yml`).
+Pages must be set to **Settings → Pages → Source: GitHub Actions**.
 
 Board images and piece sets come from lichess.org (lila); see lila's COPYING.md for their licenses.

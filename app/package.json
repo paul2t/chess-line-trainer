@@ -1,10 +1,11 @@
 {
-  "name": "chesstrainer",
+  "name": "chess-line-trainer",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Opening line trainer (Vue + TypeScript, single HTML file)",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
   },
   "keywords": [],
   "author": "",
@@ -22,5 +23,6 @@
     "vite": "^8.3.5",
     "vite-plugin-singlefile": "^2.3.4",
     "vue-tsc": "^3.3.13"
-  }
+  },
+  "private": true
 }
