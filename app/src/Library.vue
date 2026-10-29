@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue';
 import {
   state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setChapterDisabled, moveLine, moveChapter, createChapter, isOff,
-  priority, isToday, lineBadge, relDay, recentErrors, setDisabled, guessColor, conflicts, conflictPosition,
+  priority, isToday, lineBadge, relDay, recentErrors, intervalDays, setDisabled, guessColor, conflicts, conflictPosition,
   type Conflict, type LibChapter, type LibEntry, type Mode, type Chapter,
 } from './store';
 import { moveTokens, lichessUrl, lineToPgn, type Color } from './pgn';
@@ -42,7 +42,7 @@ function smartPriority(id: string, t: number): number {
   const p = priority(st, t);
   if (p <= 0) return p;
   const it = allLines.value.get(id);
-  return p + (it ? popularity(it) * (st?.a ? 0.5 : 1) : 0);
+  return p + (it ? popularity(it) * (st?.a ? 1 : 1.5) : 0);
 }
 
 const dueIds = computed(() => {
@@ -165,9 +165,13 @@ function statText(id: string): string {
   if (!st || !st.a) return '';
   const re = recentErrors(st, now.value);
   const parts = [`${st.a} tr`];
-  if (st.e) parts.push(`${st.mc ?? st.e}✗`);
+  const h = st.h?.slice(-8) ?? [];
+  if (h.length >= 3) parts.push(`✗ ${h.filter((n) => n > 0).length}/${h.length} recent`);
+  else if (st.e) parts.push(`${st.mc ?? st.e}✗`);
   if (st.lm) parts.push(`last ✗ ${relDay(st.lm, now.value)}`);
-  if (re >= 0.05) parts.push(`recent ${re.toFixed(1)}`);
+  const iv = intervalDays(st);
+  if (iv) parts.push(`every ${iv}d`);
+  void re;
   return parts.join(' · ');
 }
 

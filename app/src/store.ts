@@ -57,6 +57,9 @@ export interface LineStat {
   ep: number; // ply of the first mistake in the last failed attempt
   eps?: number[]; // all mistake plies of the last failed attempt
   mc?: number; // total mistakes ever (an attempt can have several)
+  h?: number[]; // results of the last reviews, oldest first: mistakes in each (0 = clean)
+  f?: number; // ease: how fast the interval grows after a clean review (lower = harder line)
+  iv?: number; // current review interval in days (0 = due again right away)
 }
 
 export interface Settings {
@@ -436,10 +439,29 @@ export function recentErrors(st: LineStat | undefined, now = Date.now()): number
   return st.m.reduce((acc, t) => acc + Math.pow(0.5, (now - t) / (7 * DAY)), 0);
 }
 
-/** Review interval in days after `s` clean reviews in a row: 0, 1, 2, 4, 8 … 60. */
+const MAX_IV = 60;
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
+
+/** Ease of a line (1.3 = hard … 2.6 = easy). Lines without one get it from their mistake ratio so far. */
+export function ease(st: LineStat | undefined): number {
+  if (!st) return 2.3;
+  if (st.f !== undefined) return st.f;
+  return clamp(2.3 - 1.5 * (st.e / Math.max(1, st.a)), 1.3, 2.5);
+}
+
+/** Share of the recent reviews (up to 8) that had a mistake. */
+export function recentErrorRate(st: LineStat | undefined): number {
+  if (!st || !st.a) return 0;
+  const h = st.h?.slice(-8) ?? [];
+  if (h.length >= 3) return h.filter((n) => n > 0).length / h.length;
+  return st.e / st.a; // not enough history yet
+}
+
+/** Review interval in days. Older data without one: from the clean streak (0, 1, 2, 4, 8 …). */
 export function intervalDays(st: LineStat | undefined): number {
-  if (!st || st.s <= 0) return 0;
-  return Math.min(60, Math.pow(2, st.s - 1));
+  if (!st) return 0;
+  if (st.iv !== undefined) return st.iv;
+  return st.s <= 0 ? 0 : Math.min(MAX_IV, Math.pow(2, st.s - 1));
 }
 
 export function dueAt(st: LineStat | undefined): number {
@@ -457,20 +479,39 @@ export function priority(st: LineStat | undefined, now = Date.now()): number {
   if (!st || st.a === 0) return 1;
   const iv = intervalDays(st) * DAY;
   const overdue = (now - st.lr - iv) / Math.max(iv, DAY);
-  return 3 * recentErrors(st, now) + Math.max(-1, Math.min(overdue, 5));
+  const p = 3 * recentErrors(st, now) + Math.max(-1, Math.min(overdue, 5));
+  // Lines you often get wrong come first among the due ones.
+  return p > 0 ? p + 1.5 * recentErrorRate(st) : p;
 }
 
 export function isToday(t: number, now = Date.now()): boolean {
   return t > 0 && new Date(t).toDateString() === new Date(now).toDateString();
 }
 
-/** Record one run of a line. `errorPlies` = every position (ply) where the user went wrong. */
-export function recordAttempt(id: string, errorPlies: number[]) {
+/**
+ * Record one run of a line. `errorPlies` = every position (ply) where the user went wrong.
+ * `popularity` (0..1, how much the line is played on lichess) slows the interval growth a little,
+ * so popular lines come back more often.
+ */
+export function recordAttempt(id: string, errorPlies: number[], popularity = 0) {
   const mistake = errorPlies.length > 0;
   const now = Date.now();
   let st = state.stats[id];
   if (!st) { st = { a: 0, e: 0, m: [], lr: 0, lm: 0, s: 0, lc: false, ep: -1 }; state.stats[id] = st; }
   const wasDue = now >= dueAt(st);
+  const f = ease(st);
+  const iv = intervalDays(st);
+  st.h = [...(st.h ?? []), errorPlies.length].slice(-10);
+  if (mistake) {
+    // Harder line: its interval will grow more slowly from now on.
+    st.f = clamp(f - 0.2 - 0.05 * (errorPlies.length - 1), 1.3, 2.6);
+    st.iv = 0;
+  } else {
+    st.f = clamp(f + 0.05, 1.3, 2.6);
+    // Reviewing early doesn't grow the interval (avoids inflating it by drilling the same day).
+    if (wasDue || iv === 0) st.iv = iv === 0 ? 1 : Math.min(MAX_IV, Math.max(iv + 1, Math.round(iv * st.f * (1 - 0.25 * popularity))));
+    else st.iv = iv;
+  }
   st.a++;
   if (mistake) {
     st.e++;

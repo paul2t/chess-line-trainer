@@ -7,7 +7,7 @@ import { state, allLines, isOff, recordAttempt, exportBackup, importBackup, stor
 import { cloud, saveFile, flush } from './cloud';
 import { confirmState, answerConfirm, askConfirm } from './confirm';
 import { playSound } from './sound';
-import { lichess, login, logout, setToken, refreshAll, initLichess, sandboxed, RATINGS, SPEEDS, SPEED_LABEL } from './lichess';
+import { lichess, login, logout, setToken, refreshAll, initLichess, sandboxed, popularity, RATINGS, SPEEDS, SPEED_LABEL } from './lichess';
 import { formatMoves } from './pgn';
 import { BOARDS } from './assets/boards';
 import { PIECE_SETS } from './assets/pieces';
@@ -101,7 +101,8 @@ function onDone(errorPlies: number[]) {
     session.completed.push({ id, errorPlies });
     return;
   }
-  recordAttempt(id, errorPlies);
+  const it = allLines.value.get(id);
+  recordAttempt(id, errorPlies, it ? popularity(it) : 0);
   session.results.push({ id, mistake, count: errorPlies.length });
   session.completed.push({ id, errorPlies });
   const repeats = session.mode === 'today' || session.mode === 'position' || state.settings.repeatFailed;
@@ -402,7 +403,7 @@ const storageKb = computed(() => {
       <section class="card small">
         <h3>How it works</h3>
         <p>Each variation in a PGN is a <b>line</b> (start → end of variation). The opponent's moves are played for you; you play your side.</p>
-        <p><b>Smart review</b> picks the lines with the most recent mistakes first (a mistake counts less as it gets older, halving every week), then lines that are due. A clean run doubles a line's interval (1, 2, 4, 8… days); a mistake resets it.</p>
+        <p><b>Smart review</b> picks the lines with the most recent mistakes first (a mistake counts less as it gets older, halving every week), then lines that are due — those you often get wrong, and those most played on lichess, first. A mistake makes a line due again and lowers its “ease”; a clean run multiplies its interval by that ease (about ×1.3 for lines you often miss, up to ×2.6 for easy ones), so difficult lines come back much more often. Lines played a lot on lichess grow their interval a little more slowly.</p>
         <p><b>Drill today's mistakes</b> replays every line you missed today, putting a line back in the queue each time you miss it, until you get them all right.</p>
         <p>A hint or “show move” counts as a mistake. Playing a move that belongs to another line of the PGN doesn't — you just get to try again.</p>
         <p>Select files, chapters or individual lines to restrict training to them. Use the switch on a line, or <i>Disable</i> on a selection, to exclude lines entirely.</p>
