@@ -4,7 +4,7 @@ import { Chess, type Square } from 'chess.js';
 import type { Key } from 'chessground/types';
 import Board from './Board.vue';
 import { DEFAULT_FEN, parsePgn, posKey, moveTokens, lichessUrl, type Color } from './pgn';
-import { state, allLines, lineBadge, type LibLine } from './store';
+import { state, allLines, lineBadge, addLine, createChapter, type LibLine } from './store';
 import { playSound } from './sound';
 import { searchMemory, rememberSearch } from './searchMemory';
 import { explorer as lichessData, moveGames, fmtGames, lichess as lichessState } from './lichess';
@@ -248,6 +248,31 @@ const missingHere = computed(() => {
   return e.m.filter(([uci, , n]) => !covered.has(uci) && n >= 20 && n / e.n >= thr).map(([uci, san, n]) => ({ uci, san, n, share: n / e.n }));
 });
 
+/* ---------- add the moves on the board as a new line ---------- */
+const adding = ref<null | { title: string; target: string; newName: string; color: Color }>(null);
+function openAdd() {
+  if (!cursor.value) return emit('toast', 'Play some moves first.');
+  const sideColor: Color = orientation.value === 'white' ? 'w' : 'b';
+  const last = state.chapters.find((c) => c.id === searchMemory.lastChapter) ?? state.chapters.find((c) => c.color === sideColor);
+  adding.value = {
+    title: moveTokens(startFen.value, history.value.slice(0, cursor.value)).join(' '),
+    target: last?.id ?? 'new', newName: 'My lines', color: last?.color ?? sideColor,
+  };
+}
+function onTarget() {
+  const a = adding.value!;
+  const ch = state.chapters.find((c) => c.id === a.target);
+  if (ch) a.color = ch.color;
+}
+function saveAdd() {
+  const a = adding.value!;
+  const ch = a.target === 'new' ? createChapter(a.newName.trim() || 'My lines', a.color) : state.chapters.find((c) => c.id === a.target)!;
+  const ok = addLine(ch.id, a.title.trim() || 'New line', startFen.value, history.value.slice(0, cursor.value).map((h) => h.uci), a.color);
+  searchMemory.lastChapter = ch.id;
+  adding.value = null;
+  emit('toast', ok ? `Line added to “${ch.name}”` : `“${ch.name}” already has this line`);
+}
+
 /** Your active lines disagree on your move here (side to move = your colour). */
 const disagreement = computed(() => {
   const g = explorer.value.find((x) => x.myTurn && x.rows.length > 1);
@@ -478,6 +503,7 @@ onMounted(() => {
         <button class="btn sm navb" @click="forward" :disabled="cursor >= history.length" aria-label="Next move">›</button>
         <button class="btn sm" @click="reset()" v-if="!fromTraining">Reset</button>
         <span class="flex1"></span>
+        <button class="btn sm" @click="openAdd" :disabled="!cursor" title="Save the moves up to this position as a new line">+ Add line</button>
         <a class="btn sm" :href="lichess" target="_blank" rel="noopener">lichess ↗</a>
       </div>
 
@@ -529,7 +555,7 @@ onMounted(() => {
         </div>
         <div v-for="h in hits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: state.disabled[h.item.line.id] }]">
           <div class="lmain" @click="openLine(h.item, h.ply)">
-            <div class="small muted">{{ h.item.gameName }} · as {{ h.item.color === 'w' ? 'White' : 'Black' }} · <span class="tap">step through ›</span></div>
+            <div class="small muted">{{ h.item.chapter.name }} · {{ h.item.title }} · <span class="tap">step through ›</span></div>
             <div class="ltext"><span v-for="(t, i) in tokens(h.item, h.ply)" :key="i" :class="t.cls">{{ t.t + ' ' }}</span></div>
             <div class="lstat">
               <span v-if="state.disabled[h.item.line.id]" class="badge b-off">off</span>
@@ -541,6 +567,32 @@ onMounted(() => {
       </section>
       <button v-if="fromTraining" class="btn primary big wide" @click="emit('close')">‹ Back to training</button>
     </template>
+
+    <div v-if="adding" class="modal-bg" @click.self="adding = null">
+      <div class="modal card">
+        <h3>Add a line</h3>
+        <p class="small muted">The moves up to the position on the board ({{ cursor }} half-moves).</p>
+        <label class="pick-label">Title</label>
+        <input class="inp" v-model="adding.title" />
+        <label class="pick-label">Chapter</label>
+        <select class="inp" v-model="adding.target" @change="onTarget">
+          <option value="new">➕ New chapter</option>
+          <option v-for="c in state.chapters" :key="c.id" :value="c.id">{{ c.name }}</option>
+        </select>
+        <input v-if="adding.target === 'new'" class="inp" v-model="adding.newName" placeholder="Chapter name" />
+        <div class="colorpick">
+          You play
+          <div class="seg">
+            <button :class="{ on: adding.color === 'w' }" @click="adding.color = 'w'">♔ White</button>
+            <button :class="{ on: adding.color === 'b' }" @click="adding.color = 'b'">♚ Black</button>
+          </div>
+        </div>
+        <div class="row2">
+          <button class="btn wide" @click="adding = null">Cancel</button>
+          <button class="btn primary wide" @click="saveAdd">Add</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ================= MOVES SEARCH ================= -->
     <template v-if="tab === 'moves'">
@@ -569,7 +621,7 @@ onMounted(() => {
         <button class="btn wide" @click="exploreFound" :disabled="!foundActive">🔍 Explore these lines</button>
         <div v-for="h in moveHits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: state.disabled[h.item.line.id] }]">
           <div class="lmain" @click="openAt(h)">
-            <div class="small muted">{{ h.item.file.name }} · {{ h.item.gameName }} · as {{ h.item.color === 'w' ? 'White' : 'Black' }}</div>
+            <div class="small muted">{{ h.item.chapter.name }} · {{ h.item.title }}</div>
             <div class="ltext"><span v-for="(t, i) in tokens(h.item, 0, h.plies)" :key="i" :class="t.cls">{{ t.t + ' ' }}</span></div>
             <div class="lstat">
               <span v-if="state.disabled[h.item.line.id]" class="badge b-off">off</span>

@@ -16,7 +16,7 @@ function load(): SavedSearch | undefined {
   }
 }
 
-export const searchMemory: { saved?: SavedSearch } = { saved: load() };
+export const searchMemory: { saved?: SavedSearch; lastChapter?: string } = { saved: load() };
 
 export function rememberSearch(s: SavedSearch) {
   searchMemory.saved = s;

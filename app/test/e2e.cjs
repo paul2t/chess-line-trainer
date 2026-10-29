@@ -16,8 +16,6 @@ const path = require('path');
   await page.click('.seg button:has-text("Black")');
   await page.click('.modal .btn.primary');
   await page.waitForTimeout(300);
-  await page.click('.fmain');
-  await page.click('.gmain >> nth=0');
   await page.waitForTimeout(200);
   // disable the last Najdorf line
   await page.locator('.lrow .switch span').nth(4).click();
@@ -63,7 +61,7 @@ const path = require('path');
   console.log('lib after:', (await page.locator('.train-card').innerText()).replace(/\n/g,' | '));
   // reload: persistence
   await page.reload(); await page.waitForTimeout(500);
-  await page.click('.fmain'); await page.click('.gmain >> nth=0'); await page.waitForTimeout(200);
+  await page.click('.fmain'); await page.waitForTimeout(200);
   await page.screenshot({ path: 'test/6-reloaded.png', fullPage: true });
   console.log('lines after reload:', (await page.locator('.lines').first().innerText()).replace(/\n/g,' | '));
   console.log('errors:', errs);

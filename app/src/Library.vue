@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import {
-  state, library, allLines, addPgn, removeFile, priority, isToday, lineBadge, relDay, recentErrors, setDisabled, guessColor, setFileColor, setGameColor, conflicts, conflictPosition, type Conflict,
-  type LibFile, type LibGame, type Mode,
+  state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setLineColor,
+  priority, isToday, lineBadge, relDay, recentErrors, setDisabled, guessColor, conflicts, conflictPosition,
+  type Conflict, type LibChapter, type LibEntry, type Mode, type Chapter,
 } from './store';
-import { moveTokens, lichessUrl, linesToPgn, type Color, type Line } from './pgn';
+import { moveTokens, lichessUrl, lineToPgn, type Color } from './pgn';
 import { Chess } from 'chess.js';
-import { askConfirm } from './confirm';
+import { askConfirm, askText } from './confirm';
 import { lineGames, popularity, fmtGames, missingReplies, missingLabel, lichess } from './lichess';
 
 const emit = defineEmits<{
@@ -22,12 +23,9 @@ const toggleOpen = (k: string) => (open.has(k) ? open.delete(k) : open.add(k));
 const sel = computed(() => new Set(state.selection));
 const enabledIds = (ids: string[]) => ids.filter((id) => !state.disabled[id] && allLines.value.has(id));
 
-/** Trainable ids for a game / file (lines where the user has at least one move). */
-function gameIds(g: LibGame): string[] {
-  return [...new Set(g.game.lines.map((l) => l.id).filter((id) => allLines.value.has(id)))];
-}
-function fileIds(f: LibFile): string[] {
-  return [...new Set(f.games.flatMap(gameIds))];
+/** Trainable line ids of a chapter (lines where you have at least one move). */
+function chapterIds(c: LibChapter): string[] {
+  return [...new Set(c.lines.filter((e) => e.trainable).map((e) => e.line.id))];
 }
 
 const scopeIds = computed(() => {
@@ -93,33 +91,30 @@ function toggleSel(ids: string[]) {
   state.selection = [...s];
 }
 function clearSel() { state.selection = []; }
-/* ---------- copy selection as PGN ---------- */
+/* ---------- copy as PGN (one game per line, Event = line title) ---------- */
 const pgnBox = ref('');
-async function copySelPgn() {
-  const groups = new Map<string, { color: Color; lines: Line[] }>();
-  const sel = new Set(state.selection);
-  for (const it of allLines.value.values()) {
-    if (!sel.has(it.line.id)) continue;
-    const k = it.color + '|' + it.line.startFen;
-    let g = groups.get(k);
-    if (!g) groups.set(k, (g = { color: it.color, lines: [] }));
-    g.lines.push(it.line);
-  }
-  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
-  const pgn = [...groups.values()]
-    .map((g) => linesToPgn(g.lines, {
-      Event: `Selected lines – ${g.color === 'w' ? 'White' : 'Black'}`, Site: 'Chess Line Trainer', Date: date,
-      White: '?', Black: '?', Result: '*', Orientation: g.color === 'w' ? 'white' : 'black',
-    }))
+function entriesPgn(entries: { e: LibEntry; chapter: Chapter }[]): string {
+  return entries
+    .map(({ e }) => lineToPgn(e.line, e.stored.title, { Orientation: e.color === 'w' ? 'white' : 'black' }))
     .join('\n');
+}
+async function copyPgn(pgn: string, n: number) {
   if (!pgn) return emit('toast', 'Nothing to copy.');
-  const n = [...groups.values()].reduce((a, g) => a + g.lines.length, 0);
   try {
     await navigator.clipboard.writeText(pgn);
-    emit('toast', `Copied ${n} line(s) as PGN (${groups.size} game${groups.size === 1 ? '' : 's'})`);
+    emit('toast', `Copied ${n} line(s) as PGN`);
   } catch {
     pgnBox.value = pgn; // clipboard blocked: show it for manual copy
   }
+}
+function copySelPgn() {
+  const sel = new Set(state.selection);
+  const done = new Set<string>();
+  const list: { e: LibEntry; chapter: Chapter }[] = [];
+  for (const lc of library.value)
+    for (const e of lc.lines)
+      if (sel.has(e.line.id) && !done.has(e.line.id)) { done.add(e.line.id); list.push({ e, chapter: lc.chapter }); }
+  copyPgn(entriesPgn(list), list.length);
 }
 function selectPgnText(e: Event) {
   (e.target as HTMLTextAreaElement).select();
@@ -143,17 +138,18 @@ function counts(ids: string[]) {
   return { due, off, bad };
 }
 
-/** Line rows for a game, with the part shared with the previous line greyed out. */
-function rows(g: LibGame) {
-  const out: { id: string; prefix: string; rest: string; trainable: boolean }[] = [];
+/** Line rows of a chapter, with the moves shared with the previous line greyed out. */
+function rows(c: LibChapter) {
+  const out: { id: string; e: LibEntry; prefix: string; rest: string; trainable: boolean }[] = [];
   let prev: string[] = [];
-  for (const l of g.game.lines) {
+  for (const e of c.lines) {
+    const l = e.line;
     const u = l.moves.map((m) => m.uci);
     let k = 0;
     while (k < u.length && k < prev.length && u[k] === prev[k]) k++;
     if (k === u.length) k = Math.max(0, u.length - 1);
     const tk = moveTokens(l.startFen, l.moves);
-    out.push({ id: l.id, prefix: tk.slice(0, k).join(' '), rest: tk.slice(k).join(' '), trainable: allLines.value.has(l.id) });
+    out.push({ id: l.id, e, prefix: tk.slice(0, k).join(' '), rest: tk.slice(k).join(' '), trainable: e.trainable });
     prev = u;
   }
   return out;
@@ -175,10 +171,6 @@ function statText(id: string): string {
   return parts.join(' · ');
 }
 
-function setColor(g: LibGame, c: Color) {
-  setGameColor(g.file, g.index, c);
-}
-
 function toggleLine(id: string) {
   setDisabled([id], !state.disabled[id]);
 }
@@ -195,27 +187,34 @@ function toggleGameEnabled(ids: string[]) {
 
 /* ---------- import ---------- */
 const fileInput = ref<HTMLInputElement | null>(null);
-const paste = reactive({ show: false, name: '', text: '', color: 'w' as Color | 'auto', mixed: false });
-/** Files waiting for the user to choose their side. */
-const pending = ref<{ name: string; text: string; color: Color | 'auto'; mixed: boolean; exists: boolean }[]>([]);
+const paste = reactive({ show: false, text: '' });
+/** PGNs waiting for the user to choose where they go: a new chapter (default) or an existing one. */
+interface Pending { name: string; text: string; color: Color | 'auto'; mixed: boolean; target: string /* 'new' or chapter id */; lines: number }
+const pending = ref<Pending[]>([]);
 
+function pend(name: string, text: string): Pending {
+  const g = guessColor(text);
+  const lines = (text.match(/\[Event /g) ?? []).length;
+  return { name, text, color: g.color, mixed: g.mixed, target: 'new', lines };
+}
 async function onFiles(ev: Event) {
   const files = (ev.target as HTMLInputElement).files;
   if (!files) return;
-  const list = [];
-  for (const f of Array.from(files)) {
-    const text = await f.text();
-    const name = f.name.replace(/\.pgn$/i, '');
-    const g = guessColor(text);
-    list.push({ name, text, color: g.color, mixed: g.mixed, exists: state.files.some((x) => x.name === name) });
-  }
+  const list: Pending[] = [];
+  for (const f of Array.from(files)) list.push(pend(f.name.replace(/\.pgn$/i, '').replace(/_/g, ' '), await f.text()));
   (ev.target as HTMLInputElement).value = '';
   pending.value = list;
 }
+function pasteNext() {
+  if (!paste.text.trim()) return;
+  pending.value = [pend(`Pasted ${new Date().toLocaleDateString()}`, paste.text)];
+  paste.show = false; paste.text = '';
+}
 function confirmImport() {
   const msgs = pending.value.map((p) => {
-    const r = addPgn(p.name, p.text, p.color);
-    return `${p.name}: ${r.games} chapter(s), ${r.lines} line(s) ${p.color === 'w' ? 'as White' : p.color === 'b' ? 'as Black' : 'sides set per chapter'}${r.replaced ? ' (updated, progress kept)' : ''}`;
+    const r = importPgn(p.text, p.target === 'new' ? { kind: 'new', name: p.name.trim() || 'Chapter', color: p.color } : { kind: 'existing', chapterId: p.target });
+    open.add(r.chapter.id);
+    return `${r.chapter.name}: ${r.added} line(s) added${r.skipped ? `, ${r.skipped} already there` : ''}`;
   });
   pending.value = [];
   now.value = Date.now();
@@ -224,25 +223,48 @@ function confirmImport() {
 function setAllPending(c: Color | 'auto') {
   pending.value.forEach((p) => (p.color = c));
 }
-function onPasteInput() {
-  if (paste.text.length > 20) { const g = guessColor(paste.text); paste.color = g.color; paste.mixed = g.mixed; }
+
+/* ---------- chapter & line actions ---------- */
+function chapterColor(c: LibChapter): Color | 'mixed' {
+  const cs = new Set(c.lines.map((e) => e.color));
+  return cs.size > 1 ? 'mixed' : cs.size ? [...cs][0] : c.chapter.color;
 }
-function doPaste() {
-  if (!paste.text.trim()) return;
-  const r = addPgn(paste.name.trim() || `Pasted ${new Date().toLocaleString()}`, paste.text, paste.color);
-  emit('toast', `${r.games} chapter(s), ${r.lines} line(s)${r.replaced ? ' (updated, progress kept)' : ''}`);
-  paste.show = false; paste.text = ''; paste.name = '';
-}
-function fileColor(f: LibFile): Color | 'mixed' {
-  const cs = new Set(f.games.map((g) => g.color));
-  return cs.size === 1 ? [...cs][0] : 'mixed';
-}
-async function del(f: LibFile) {
-  if (await askConfirm(`Remove "${f.file.name}"?`, 'Progress for its lines is kept in case you re-import it.', 'Remove')) {
-    const ids = new Set(fileIds(f));
-    removeFile(f.file.id);
-    state.selection = state.selection.filter((id) => !ids.has(id) || allLines.value.has(id));
+const menu = ref<null | { kind: 'chapter'; c: LibChapter } | { kind: 'line'; c: LibChapter; e: LibEntry }>(null);
+async function delChapter(c: LibChapter) {
+  menu.value = null;
+  if (await askConfirm(`Delete chapter "${c.chapter.name}"?`, `Its ${c.lines.length} line(s) are removed. Progress is kept in case you import them again.`, 'Delete')) {
+    removeChapter(c.chapter.id);
+    state.selection = state.selection.filter((id) => allLines.value.has(id));
   }
+}
+async function renameCh(c: LibChapter) {
+  menu.value = null;
+  const n = await askText('Rename chapter', c.chapter.name);
+  if (n) renameChapter(c.chapter, n);
+}
+function copyChapter(c: LibChapter) {
+  menu.value = null;
+  copyPgn(entriesPgn(c.lines.map((e) => ({ e, chapter: c.chapter }))), c.lines.length);
+}
+async function renameLn(c: LibChapter, e: LibEntry) {
+  menu.value = null;
+  const n = await askText('Rename line', e.stored.title);
+  if (n) renameLine(c.chapter, e.stored.id, n);
+}
+async function delLine(c: LibChapter, e: LibEntry) {
+  menu.value = null;
+  if (await askConfirm(`Delete line "${e.stored.title}"?`, 'Its progress is kept in case you add it again.', 'Delete')) {
+    removeLine(c.chapter, e.stored.id);
+    state.selection = state.selection.filter((id) => allLines.value.has(id));
+  }
+}
+function lineSide(c: LibChapter, e: LibEntry, color: Color) {
+  menu.value = null;
+  setLineColor(c.chapter, e.stored.id, color);
+}
+function copyLine(c: LibChapter, e: LibEntry) {
+  menu.value = null;
+  copyPgn(entriesPgn([{ e, chapter: c.chapter }]), 1);
 }
 
 /* ---------- conflicts / missing replies ---------- */
@@ -267,7 +289,7 @@ function optionLines(c: Conflict, ids: string[]) {
     const it = allLines.value.get(id)!;
     const ply = Math.max(0, it.line.keys.indexOf(k));
     const t = moveTokens(it.line.startFen, it.line.moves);
-    return { id, game: it.gameName, file: it.file.name, before: t.slice(0, ply).join(' '), move: t[ply] ?? '', after: t.slice(ply + 1).join(' ') };
+    return { id, game: it.title, file: it.chapter.name, before: t.slice(0, ply).join(' '), move: t[ply] ?? '', after: t.slice(ply + 1).join(' ') };
   });
 }
 function disableOption(ids: string[], san: string) {
@@ -311,7 +333,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       <div v-if="showConflicts">
         <p class="small muted">In these positions you'd have to remember which line you're in. Disable the lines you don't want, or keep both on purpose — the trainer still asks for the move of the line being trained.</p>
         <div v-for="c in conflicts" :key="c.key" class="conf">
-          <div class="small muted">{{ c.sample.item.gameName }} · as {{ c.color === 'w' ? 'White' : 'Black' }}</div>
+          <div class="small muted">{{ c.sample.item.chapter.name }} · as {{ c.color === 'w' ? 'White' : 'Black' }}</div>
           <div class="ltext">{{ conflictText(c) }} <b>→ ?</b></div>
           <div class="confopts">
             <div v-for="o in c.options" :key="o.uci" class="confopt">
@@ -347,7 +369,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       <div v-if="showMissing">
         <p class="small muted">Opponent moves played at least {{ state.settings.missingThreshold }}% of the time on lichess (your level and time-control filters) that none of your active lines answers. Most played first.</p>
         <div v-for="m in missingReplies.slice(0, missShown)" :key="m.key + m.uci" class="conf">
-          <div class="small muted">{{ m.sample.item.gameName }} · as {{ m.color === 'w' ? 'White' : 'Black' }}</div>
+          <div class="small muted">{{ m.sample.item.chapter.name }} · {{ m.sample.item.title }}</div>
           <div class="ltext">{{ missingLabel(m) }} <b class="missing">→ {{ m.san }}</b> <span class="gcount">{{ Math.round(m.share * 100) }}% · {{ fmtGames(m.games) }} games</span></div>
           <div class="confacts">
             <a href="#" @click.prevent="emit('search', { fen: m.sample.item.line.startFen, moves: m.sample.item.line.moves.slice(0, m.sample.ply).map((x) => x.uci) })">Open in explorer</a>
@@ -366,29 +388,22 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
     </div>
 
     <div class="lib-head">
-      <h2>PGN files</h2>
+      <h2>Chapters</h2>
       <div>
         <button class="btn sm" @click="paste.show = !paste.show">Paste</button>
-        <button class="btn sm primary" @click="fileInput?.click()">+ Load PGN</button>
+        <button class="btn sm primary" @click="fileInput?.click()">+ Import PGN</button>
         <input ref="fileInput" type="file" multiple hidden @change="onFiles" />
       </div>
     </div>
 
     <section class="card" v-if="paste.show">
-      <input class="inp" v-model="paste.name" placeholder="Name (same name = update existing)" />
-      <textarea class="inp" v-model="paste.text" rows="6" placeholder="Paste PGN here…" @change="onPasteInput"></textarea>
-      <div class="colorpick">
-        Repertoire for
-        <button :class="['btn sm', { primary: paste.color === 'w' }]" @click="paste.color = 'w'">♔ White</button>
-        <button :class="['btn sm', { primary: paste.color === 'b' }]" @click="paste.color = 'b'">♚ Black</button>
-        <button v-if="paste.mixed" :class="['btn sm', { primary: paste.color === 'auto' }]" @click="paste.color = 'auto'">Per chapter</button>
-      </div>
-      <button class="btn primary wide" @click="doPaste">Add</button>
+      <textarea class="inp" v-model="paste.text" rows="6" placeholder="Paste PGN here…"></textarea>
+      <button class="btn primary wide" @click="pasteNext">Next ›</button>
     </section>
 
     <div v-if="pgnBox" class="modal-bg" @click.self="pgnBox = ''">
       <div class="modal card">
-        <h3>PGN of the selected lines</h3>
+        <h3>PGN</h3>
         <p class="small muted">Copying wasn't allowed here — tap the text, then copy it.</p>
         <textarea class="inp pgnbox" readonly rows="12" :value="pgnBox" @focus="selectPgnText" @click="selectPgnText"></textarea>
         <button class="btn primary wide" @click="pgnBox = ''">Close</button>
@@ -398,19 +413,28 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
     <div v-if="pending.length" class="modal-bg">
       <div class="modal card">
         <h3>Import {{ pending.length }} PGN{{ pending.length > 1 ? 's' : '' }}</h3>
-        <p class="small muted">Which side is this repertoire for? Pre-set from the file's content. You can still change it per file or chapter later with ♔/♚.</p>
+        <p class="small muted">Each game of the PGN becomes a line, titled with its Event. Games with variations are split into one line per variation.</p>
         <div v-if="pending.length > 1" class="colorpick">
-          All:
+          All new chapters:
           <button class="btn sm" @click="setAllPending('w')">♔ White</button>
           <button class="btn sm" @click="setAllPending('b')">♚ Black</button>
         </div>
-        <div v-for="p in pending" :key="p.name" class="pend">
-          <div class="pname">{{ p.name }}<span v-if="p.exists" class="muted small"> · will update existing</span></div>
-          <div class="seg">
-            <button :class="{ on: p.color === 'w' }" @click="p.color = 'w'">♔ White</button>
-            <button :class="{ on: p.color === 'b' }" @click="p.color = 'b'">♚ Black</button>
-            <button v-if="p.mixed" :class="{ on: p.color === 'auto' }" @click="p.color = 'auto'" title="Chapters look like a mix of White and Black repertoires">Per chapter</button>
-          </div>
+        <div v-for="(p, i) in pending" :key="i" class="pend-block">
+          <div class="small muted">{{ p.lines }} game{{ p.lines === 1 ? '' : 's' }} in this PGN</div>
+          <label class="pick-label">Add to</label>
+          <select class="inp" v-model="p.target">
+            <option value="new">➕ New chapter</option>
+            <option v-for="c in state.chapters" :key="c.id" :value="c.id">{{ c.name }}</option>
+          </select>
+          <template v-if="p.target === 'new'">
+            <input class="inp" v-model="p.name" placeholder="Chapter name" />
+            <div class="seg">
+              <button :class="{ on: p.color === 'w' }" @click="p.color = 'w'">♔ White</button>
+              <button :class="{ on: p.color === 'b' }" @click="p.color = 'b'">♚ Black</button>
+              <button v-if="p.mixed" :class="{ on: p.color === 'auto' }" @click="p.color = 'auto'" title="Games look like a mix of White and Black repertoires">Per game</button>
+            </div>
+          </template>
+          <p v-else class="small muted">Lines take the chapter's side; lines already in it are skipped.</p>
         </div>
         <div class="row2">
           <button class="btn wide" @click="pending = []">Cancel</button>
@@ -419,85 +443,77 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       </div>
     </div>
 
-    <div v-if="!library.length" class="empty card">
-      <p><b>No PGN loaded yet.</b></p>
-      <p>Tap <b>+ Load PGN</b> to pick one or more .pgn files. Every variation becomes a line to train. You'll choose which side the repertoire is for.</p>
+    <div v-if="menu" class="modal-bg" @click.self="menu = null">
+      <div class="modal card sheet">
+        <template v-if="menu.kind === 'chapter'">
+          <h3>{{ menu.c.chapter.name }}</h3>
+          <button class="btn wide" @click="renameCh(menu.c)">✎ Rename</button>
+          <button class="btn wide" @click="copyChapter(menu.c)">⧉ Copy as PGN</button>
+          <button class="btn wide danger" @click="delChapter(menu.c)">🗑 Delete chapter</button>
+        </template>
+        <template v-else>
+          <h3>{{ menu.e.stored.title }}</h3>
+          <button class="btn wide" @click="renameLn(menu.c, menu.e)">✎ Rename</button>
+          <button class="btn wide" @click="lineSide(menu.c, menu.e, menu.e.color === 'w' ? 'b' : 'w')">Train as {{ menu.e.color === 'w' ? '♚ Black' : '♔ White' }}</button>
+          <button class="btn wide" @click="copyLine(menu.c, menu.e)">⧉ Copy as PGN</button>
+          <button class="btn wide danger" @click="delLine(menu.c, menu.e)">🗑 Delete line</button>
+        </template>
+        <button class="btn wide" @click="menu = null">Close</button>
+      </div>
     </div>
 
-    <section v-for="f in library" :key="f.file.id" class="card file">
-      <div :class="['frow', { off: allOff(fileIds(f)) }]">
-        <span :class="['cb', selState(fileIds(f))]" @click="toggleSel(fileIds(f))"></span>
-        <div class="fmain" @click="toggleOpen(f.file.id)">
-          <div class="fname">{{ f.file.name }}<span v-if="allOff(fileIds(f))" class="badge b-off">off</span></div>
+    <div v-if="!library.length" class="empty card">
+      <p><b>No chapter yet.</b></p>
+      <p>Tap <b>+ Import PGN</b> to pick one or more .pgn files: each becomes a chapter, each game in it a line to train. You can also add lines from the explorer.</p>
+    </div>
+
+    <section v-for="c in library" :key="c.chapter.id" class="card file">
+      <div :class="['frow', { off: allOff(chapterIds(c)) }]">
+        <span :class="['cb', selState(chapterIds(c))]" @click="toggleSel(chapterIds(c))"></span>
+        <div class="fmain" @click="toggleOpen(c.chapter.id)">
+          <div class="fname">{{ c.chapter.name }}<span v-if="allOff(chapterIds(c))" class="badge b-off">off</span></div>
           <div class="fmeta">
-            {{ f.games.length }} chapter{{ f.games.length === 1 ? '' : 's' }} · {{ fileIds(f).length }} lines
-            <template v-for="c in [counts(fileIds(f))]" :key="0">
-              <span v-if="c.due" class="t-due"> · {{ c.due }} due</span>
-              <span v-if="c.bad" class="t-bad"> · {{ c.bad }} missed today</span>
-              <span v-if="c.off" class="muted"> · {{ c.off }} off</span>
+            {{ c.lines.length }} line{{ c.lines.length === 1 ? '' : 's' }}
+            <template v-for="cc in [counts(chapterIds(c))]" :key="0">
+              <span v-if="cc.due" class="t-due"> · {{ cc.due }} due</span>
+              <span v-if="cc.bad" class="t-bad"> · {{ cc.bad }} missed today</span>
+              <span v-if="cc.off" class="muted"> · {{ cc.off }} off</span>
             </template>
           </div>
         </div>
         <div class="side">
-          <button :class="['sideb', { on: fileColor(f) === 'w', mixed: fileColor(f) === 'mixed' }]" @click="setFileColor(f.file, 'w')" title="Whole file as White">♔</button>
-          <button :class="['sideb', { on: fileColor(f) === 'b', mixed: fileColor(f) === 'mixed' }]" @click="setFileColor(f.file, 'b')" title="Whole file as Black">♚</button>
+          <button :class="['sideb', { on: chapterColor(c) === 'w', mixed: chapterColor(c) === 'mixed' }]" @click="setChapterColor(c.chapter, 'w')" title="Whole chapter as White">♔</button>
+          <button :class="['sideb', { on: chapterColor(c) === 'b', mixed: chapterColor(c) === 'mixed' }]" @click="setChapterColor(c.chapter, 'b')" title="Whole chapter as Black">♚</button>
         </div>
-        <span class="chev" @click="toggleOpen(f.file.id)">{{ open.has(f.file.id) ? '▾' : '▸' }}</span>
+        <button class="icon dots" @click="menu = { kind: 'chapter', c }" aria-label="Chapter actions">⋯</button>
+        <span class="chev" @click="toggleOpen(c.chapter.id)">{{ open.has(c.chapter.id) ? '▾' : '▸' }}</span>
       </div>
 
-      <div v-if="open.has(f.file.id)" class="games">
-        <div v-if="f.errors.length" class="warn small">⚠ {{ f.errors.length }} move(s) skipped: {{ f.errors.slice(0, 3).join('; ') }}{{ f.errors.length > 3 ? '…' : '' }}</div>
-        <div v-for="g in f.games" :key="g.index" class="game">
-          <div :class="['grow', { off: allOff(gameIds(g)) }]">
-            <span :class="['cb', selState(gameIds(g))]" @click="toggleSel(gameIds(g))"></span>
-            <div class="gmain" @click="toggleOpen(f.file.id + ':' + g.index)">
-              <div class="gname">{{ g.game.name }}<span v-if="allOff(gameIds(g))" class="badge b-off">off</span></div>
-              <div class="fmeta">
-                {{ gameIds(g).length }} lines
-                <template v-for="c in [counts(gameIds(g))]" :key="0">
-                  <span v-if="c.due" class="t-due"> · {{ c.due }} due</span>
-                  <span v-if="c.bad" class="t-bad"> · {{ c.bad }} missed today</span>
-                  <span v-if="c.off" class="muted"> · {{ c.off }} off</span>
-                </template>
-              </div>
-            </div>
-            <div class="side">
-              <button :class="['sideb', { on: g.color === 'w' }]" @click="setColor(g, 'w')" title="Train as White">♔</button>
-              <button :class="['sideb', { on: g.color === 'b' }]" @click="setColor(g, 'b')" title="Train as Black">♚</button>
-            </div>
-            <span class="chev" @click="toggleOpen(f.file.id + ':' + g.index)">{{ open.has(f.file.id + ':' + g.index) ? '▾' : '▸' }}</span>
-          </div>
-
-          <div v-if="open.has(f.file.id + ':' + g.index)" class="lines">
-            <div class="lines-tools">
-              <a href="#" @click.prevent="toggleGameEnabled(gameIds(g))">
-                {{ anyOn(gameIds(g)) ? 'Disable all lines' : 'Enable all lines' }}
-              </a>
-            </div>
-            <div v-for="r in rows(g)" :key="r.id + r.rest" :class="['lrow', { off: state.disabled[r.id], untrainable: !r.trainable }]">
-              <span v-if="r.trainable" :class="['cb', sel.has(r.id) ? 'all' : 'none']" @click="toggleSel([r.id])"></span>
-              <span v-else class="cb-sp"></span>
-              <div class="lmain" @click="r.trainable && toggleSel([r.id])">
-                <div class="ltext"><span class="lpre">{{ r.prefix }}</span> {{ r.rest }}</div>
-                <div class="lstat" v-if="r.trainable">
-                  <span v-if="state.disabled[r.id]" class="badge b-off">off</span>
-                  <span v-else :class="['badge', lineBadge(state.stats[r.id], now).cls]">{{ lineBadge(state.stats[r.id], now).text }}</span>
-                  <span class="muted">{{ statText(r.id) }}</span>
-                  <span v-if="gamesOf(r.id)" class="gcount" title="Lichess games that followed this whole line">♟ {{ gamesOf(r.id) }}</span>
-                </div>
-                <div class="lstat muted" v-else>no move for your side</div>
-              </div>
-              <label v-if="r.trainable" class="switch" :title="state.disabled[r.id] ? 'Enable line' : 'Disable line'">
-                <input type="checkbox" :checked="!state.disabled[r.id]" @change="toggleLine(r.id)" />
-                <span></span>
-              </label>
-            </div>
-          </div>
+      <div v-if="open.has(c.chapter.id)" class="lines">
+        <div class="lines-tools" v-if="chapterIds(c).length">
+          <a href="#" @click.prevent="toggleGameEnabled(chapterIds(c))">{{ anyOn(chapterIds(c)) ? 'Disable all lines' : 'Enable all lines' }}</a>
         </div>
-        <div class="file-actions">
-          <button class="btn sm" @click="toggleSel(fileIds(f))">{{ selState(fileIds(f)) === 'all' ? 'Unselect file' : 'Select file' }}</button>
-          <button class="btn sm danger" @click="del(f)">Remove file</button>
+        <div v-for="r in rows(c)" :key="r.id + r.e.stored.title" :class="['lrow', { off: state.disabled[r.id], untrainable: !r.trainable }]">
+          <span v-if="r.trainable" :class="['cb', sel.has(r.id) ? 'all' : 'none']" @click="toggleSel([r.id])"></span>
+          <span v-else class="cb-sp"></span>
+          <div class="lmain" @click="r.trainable && toggleSel([r.id])">
+            <div class="ltitle">{{ r.e.stored.title }}<span v-if="r.e.color !== c.chapter.color" class="muted"> · as {{ r.e.color === 'w' ? 'White' : 'Black' }}</span></div>
+            <div class="ltext"><span class="lpre">{{ r.prefix }}</span> {{ r.rest }}</div>
+            <div class="lstat" v-if="r.trainable">
+              <span v-if="state.disabled[r.id]" class="badge b-off">off</span>
+              <span v-else :class="['badge', lineBadge(state.stats[r.id], now).cls]">{{ lineBadge(state.stats[r.id], now).text }}</span>
+              <span class="muted">{{ statText(r.id) }}</span>
+              <span v-if="gamesOf(r.id)" class="gcount" title="Lichess games that followed this whole line">♟ {{ gamesOf(r.id) }}</span>
+            </div>
+            <div class="lstat muted" v-else>no move for your side</div>
+          </div>
+          <label v-if="r.trainable" class="switch" :title="state.disabled[r.id] ? 'Enable line' : 'Disable line'">
+            <input type="checkbox" :checked="!state.disabled[r.id]" @change="toggleLine(r.id)" />
+            <span></span>
+          </label>
+          <button class="icon dots" @click="menu = { kind: 'line', c, e: r.e }" aria-label="Line actions">⋯</button>
         </div>
+        <div v-if="!c.lines.length" class="small muted">No line yet — import a PGN into this chapter or add lines from the explorer.</div>
       </div>
     </section>
   </div>

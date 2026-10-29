@@ -5,7 +5,7 @@ const { chromium } = require('playwright'); const path = require('path');
   const errs = []; page.on('pageerror', e => errs.push(e.message));
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Per chapter")'); await page.click('.modal .btn.primary');
+  await page.click('.seg button:has-text("Per game")'); await page.click('.modal .btn.primary');
   await page.click('text=Find & explore lines'); await page.waitForTimeout(300);
   const res = async () => (await page.locator('.presult').innerText()).replace(/\n/g,' ');
   console.log('start:', await res(), '| chips:', (await page.locator('.explorer').innerText()).replace(/\n/g,' '));

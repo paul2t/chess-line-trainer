@@ -114,6 +114,11 @@ function tokenize(s: string): Tok[] {
   return toks;
 }
 
+/** Stable line identity: start position + moves. Progress is keyed by it, so it must never change. */
+export function lineId(startFen: string, ucis: string[]): string {
+  return hash(startFen.split(' ').slice(0, 4).join(' ') + '|' + ucis.join(' '));
+}
+
 /** Fast stable 53-bit string hash (cyrb53). */
 function hash(str: string): string {
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
@@ -150,7 +155,7 @@ function buildGame(headers: Record<string, string>, root: PgnNode, idx: number, 
     if (node.children.length === 0) {
       if (path.length) {
         const moves = path.slice();
-        lines.push({ id: hash(root.fen.split(' ').slice(0, 4).join(' ') + '|' + moves.map((m) => m.uci).join(' ')), startFen: root.fen, moves, keys: keyPath.slice() });
+        lines.push({ id: lineId(root.fen, moves.map((m) => m.uci)), startFen: root.fen, moves, keys: keyPath.slice() });
       }
       return;
     }
@@ -388,4 +393,78 @@ export function linesToPgn(lines: Line[], headers: Record<string, string>): stri
   }
   if (cur) text.push(cur);
   return head + '\n\n' + text.join('\n') + '\n';
+}
+
+/** "5.Nf3" or "5...Nc6" for the move at `ply`. */
+export function plyLabel(startFen: string, moves: { san: string }[], ply: number): string {
+  const { num, white } = moveNumberPrefix(startFen, ply);
+  return `${num}${white ? '.' : '...'}${moves[ply].san}`;
+}
+
+/* ---------- lines stored as moves ---------- */
+
+/** Rebuild a full Line (SAN, position keys) from a start FEN and UCI moves. Stops at the first illegal move. */
+export function buildLine(startFen: string, ucis: string[], comments: Record<number, string> = {}): Line {
+  const pos = startPos(startFen) ?? Chess.default();
+  const fen0 = makeFen(pos.toSetup());
+  const keys = [posKey(fen0)];
+  const moves: LineMove[] = [];
+  for (let i = 0; i < ucis.length; i++) {
+    const mv = parseUci(ucis[i]);
+    if (!mv || !pos.isLegal(mv)) break;
+    const san = makeSanAndPlay(pos, mv);
+    moves.push({ san, uci: ucis[i], comment: comments[i] ?? '', alts: [] });
+    keys.push(posKey(makeFen(pos.toSetup())));
+  }
+  return { id: lineId(fen0, moves.map((m) => m.uci)), startFen: fen0, moves, keys };
+}
+
+/** One line as a PGN game (the format of a chapter export). */
+export function lineToPgn(line: Line, title: string, extra: Record<string, string> = {}): string {
+  const h: Record<string, string> = { Event: title || '?', ...extra };
+  if (posKey(line.startFen) !== posKey(DEFAULT_FEN)) { h.SetUp = '1'; h.FEN = line.startFen; }
+  const head = Object.entries(h).map(([k, v]) => `[${k} "${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`).join('\n');
+  const toks: string[] = [];
+  line.moves.forEach((m, i) => {
+    const { num, white } = moveNumberPrefix(line.startFen, i);
+    const prevComment = i > 0 && !!line.moves[i - 1].comment;
+    toks.push((white ? `${num}.` : i === 0 || prevComment ? `${num}...` : '') + m.san + (m.comment ? ` {${m.comment.replace(/[{}]/g, '')}}` : ''));
+  });
+  const text: string[] = [];
+  let cur = '';
+  for (const tok of (toks.join(' ') + ' *').split(' ')) {
+    if (cur && cur.length + tok.length + 1 > 80) { text.push(cur); cur = tok; } else cur = cur ? cur + ' ' + tok : tok;
+  }
+  if (cur) text.push(cur);
+  return head + '\n\n' + text.join('\n') + '\n';
+}
+
+/**
+ * Split PGN games into single lines (one per variation path). A game without variations gives one line
+ * titled with its Event; with variations, the lines get the title plus the move where they branch off.
+ */
+export function pgnToLines(text: string, nameOf: (g: Game, i: number) => string = (g) => g.headers.Event && g.headers.Event !== '?' ? g.headers.Event : g.name): { title: string; line: Line; game: Game }[] {
+  const out: { title: string; line: Line; game: Game }[] = [];
+  parsePgn(text).forEach((g, gi) => {
+    const base = nameOf(g, gi);
+    g.lines.forEach((l, li) => {
+      let title = base;
+      if (li > 0) {
+        // label: first move where this line leaves the previous one
+        const prev = g.lines[li - 1];
+        let k = 0;
+        while (k < l.moves.length && prev.moves[k]?.uci === l.moves[k].uci) k++;
+        if (k < l.moves.length) title = `${base} · ${plyLabel(l.startFen, l.moves, k)}`;
+      }
+      out.push({ title, line: l, game: g });
+    });
+  });
+  // keep titles unique
+  const seen = new Map<string, number>();
+  for (const o of out) {
+    const n = seen.get(o.title) ?? 0;
+    seen.set(o.title, n + 1);
+    if (n) o.title = `${o.title} (${n + 1})`;
+  }
+  return out;
 }

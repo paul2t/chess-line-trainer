@@ -6,13 +6,12 @@ const { chromium } = require('playwright'); const path = require('path');
   const errs = []; page.on('pageerror', e => errs.push(e.message));
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Per chapter")'); await page.click('.modal .btn.primary');
+  await page.click('.seg button:has-text("Per game")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(3800);
-  await page.click('.fmain'); await page.click('.gmain >> nth=0'); await page.waitForTimeout(200);
+  await page.waitForTimeout(200);
   console.log('user-select on line text:', await page.locator('.library .lmain').first().evaluate(e => getComputedStyle(e).userSelect || getComputedStyle(e).webkitUserSelect));
   // select 3 Najdorf lines + London line, copy
   for (const i of [0, 1, 2]) await page.locator('.library .lrow .cb').nth(i).click();
-  await page.click('.gmain >> nth=1'); await page.waitForTimeout(150);
   await page.locator('.library .lrow .cb').nth(5).click();
   await page.click('.selbar >> text=Copy PGN'); await page.waitForTimeout(300);
   console.log('toast:', await page.locator('.toast').innerText());

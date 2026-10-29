@@ -181,7 +181,7 @@ const summary = computed(() => {
     firstClean: arr.filter(([, v]) => v.firstClean).length,
     missed: arr.filter(([, v]) => !v.firstClean).map(([id, v]) => {
       const it = allLines.value.get(id);
-      return { id, v, name: it?.gameName ?? '', text: it ? formatMoves(it.line.startFen, it.line.moves) : id };
+      return { id, v, name: it ? `${it.chapter.name} · ${it.title}` : '', text: it ? formatMoves(it.line.startFen, it.line.moves) : id };
     }),
   };
 });
@@ -247,7 +247,7 @@ const lichessStatus = computed(() => {
 onMounted(() => initLichess(toast));
 
 const storageKb = computed(() => {
-  void state.stats; void state.files;
+  void state.stats; void state.chapters;
   let n = 0;
   try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i)!; n += (localStorage.getItem(k) || '').length + k.length; } } catch { /* ignore */ }
   return Math.round((n * 2) / 1024);
@@ -416,9 +416,10 @@ const storageKb = computed(() => {
       <div class="modal card">
         <h3>{{ confirmState.title }}</h3>
         <p class="small muted" v-if="confirmState.body">{{ confirmState.body }}</p>
+        <input v-if="confirmState.input !== null" class="inp" v-model="confirmState.input" @keydown.enter="answerConfirm(true)" autofocus />
         <div class="row2">
           <button class="btn wide" @click="answerConfirm(false)">Cancel</button>
-          <button class="btn danger wide" @click="answerConfirm(true)">{{ confirmState.ok }}</button>
+          <button :class="['btn wide', confirmState.input !== null ? 'primary' : 'danger']" @click="answerConfirm(true)">{{ confirmState.ok }}</button>
         </div>
       </div>
     </div>

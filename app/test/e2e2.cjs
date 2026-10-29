@@ -13,7 +13,7 @@ const path = require('path');
   const st = () => page.locator('.status').innerText();
   const bar = () => page.locator('.tbar').innerText().then(t=>t.replace(/\n/g,' | '));
   // select only the Bb5+ line
-  await page.click('.fmain'); await page.click('.gmain >> nth=0'); await page.waitForTimeout(200);
+  await page.waitForTimeout(200);
   await page.locator('.lrow .cb').nth(3).click();
   console.log('scope:', await page.locator('.scope').innerText());
   await page.click('.train-card .btn.primary'); await page.waitForTimeout(1100);

@@ -44,7 +44,7 @@ const store = {}; // docPath -> json
   console.log('B status:', await B.page.locator('.cloud').innerText());
   console.log('B library:', (await B.page.locator('.file .fmeta').first().innerText()));
   await B.page.click('.top .icon');
-  await B.page.click('.fmain'); await B.page.click('.gmain >> nth=0'); console.log('B first line stat:', await B.page.locator('.lstat').first().innerText());
+  await B.page.click('.fmain'); console.log('B first line stat:', await B.page.locator('.lstat').first().innerText());
   console.log('B theme selected:', await B.page.locator('.theme-pick.on').innerText());
   // delete file on B -> server should drop file docs
   await B.page.click('.top .icon'); await B.page.click('.fmain'); await B.page.click('.file-actions .btn.danger');

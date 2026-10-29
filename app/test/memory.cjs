@@ -8,7 +8,7 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(3800);
   // disable the first Najdorf line so we can check ordering
-  await page.click('.fmain'); await page.click('.gmain >> nth=0'); await page.waitForTimeout(200);
+  await page.waitForTimeout(200);
   await page.locator('.lrow .switch span').nth(0).click(); await page.waitForTimeout(200);
   await page.click('text=Find & explore lines'); await page.waitForTimeout(300);
   await page.click('.ctl-row .seg >> nth=0 >> text=Moves');

@@ -5,7 +5,7 @@ import type { Key } from 'chessground/types';
 import type { DrawShape } from 'chessground/draw';
 import Board from './Board.vue';
 import { moveNumberPrefix, lichessUrl, DEFAULT_FEN } from './pgn';
-import type { LibLine } from './store';
+import { userMovesAt, type LibLine } from './store';
 import { playSound } from './sound';
 
 const props = withDefaults(
@@ -183,8 +183,8 @@ function onUserMove(orig: Key, dest: Key) {
     return;
   }
   const san = sanOf(uci);
-  if (exp.alts.includes(uci)) {
-    status.value = { kind: 'alt', text: `${san} is in another line of this PGN. This line wants a different move — try again.` };
+  if (userMovesAt(line.value.keys[ply.value], props.item.color).has(uci)) {
+    status.value = { kind: 'alt', text: `${san} is played in another of your lines. This line wants a different move — try again.` };
   } else {
     markMistake();
     status.value = { kind: 'wrong', text: `✗ ${san} — the move is ${exp.san}` };
@@ -273,7 +273,7 @@ onBeforeUnmount(() => clearTimeout(timer));
       <button class="icon" @click="emit('quit')" aria-label="End session">✕</button>
       <div class="tinfo">
         <div class="tprog">{{ progress }}</div>
-        <div class="tsub">{{ modeLabel }} · {{ item.gameName }} · as {{ item.color === 'w' ? 'White' : 'Black' }}</div>
+        <div class="tsub">{{ item.chapter.name }} · {{ item.title }}</div>
       </div>
       <button class="icon" v-if="!finished" @click="emit('skip')" aria-label="Skip line" title="Skip (not recorded)">⏭</button>
     </div>

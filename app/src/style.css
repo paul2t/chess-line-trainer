@@ -248,3 +248,10 @@ details summary { cursor: pointer; margin: 6px 0; }
 .xmissing { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding: 6px 0 2px; border-top: 1px dashed var(--line); }
 .chip.missing-chip { border-color: #8a3b36; background: #3a2222; }
 .xcount { text-align: right; line-height: 1.25; }
+
+.ltitle { font-weight: 600; font-size: 13.5px; margin-bottom: 1px; word-break: break-word; }
+.icon.dots { width: 30px; height: 32px; font-size: 18px; color: var(--muted); flex: none; }
+.pend-block { border-top: 1px solid var(--line); padding: 8px 0; }
+.pend-block .seg { margin-bottom: 4px; }
+select.inp { appearance: auto; }
+.sheet .btn.wide { text-align: left; }

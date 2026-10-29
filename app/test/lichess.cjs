@@ -43,7 +43,7 @@ const { Chess } = require('chess.js');
   console.log('missing card:', (await page.locator('.misscard .warnhead').innerText().catch(() => 'none')).replace(/\n/g, ' '));
   await page.click('.misscard .warnhead').catch(() => {}); await page.waitForTimeout(200);
   console.log('first missing:', (await page.locator('.misscard .conf').first().innerText().catch(() => '-')).replace(/\n/g, ' '));
-  await page.click('.fmain'); await page.click('.gmain >> nth=0'); await page.waitForTimeout(200);
+  await page.click('.fmain'); await page.waitForTimeout(200);
   console.log('line games:', (await page.locator('.library .lstat .gcount').allInnerTexts()).join(', '));
   await page.screenshot({ path: 'test/27-lib.png', fullPage: true });
   await page.click('.misscard >> text=Open in explorer'); await page.waitForTimeout(500);
