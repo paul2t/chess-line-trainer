@@ -1,0 +1,22 @@
+const { chromium } = require('playwright'); const path = require('path');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })).newPage();
+  const errs = []; page.on('pageerror', e => errs.push(e.message));
+  const t0 = Date.now();
+  await page.goto('file://' + path.resolve('dist/index.html'));
+  await page.waitForSelector('.top'); console.log('load ms', Date.now() - t0);
+  await page.setInputFiles('input[type=file]', 'test/sample.pgn');
+  await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
+  await page.waitForTimeout(3800);
+  await page.click('.top .icon');
+  console.log('boards:', await page.locator('.themes').nth(0).locator('.theme-pick').count(), 'sets:', await page.locator('.themes').nth(1).locator('.theme-pick').count());
+  await page.click('.theme-pick:has-text("Wood 4")'); await page.click('.theme-pick:has-text("Staunty")');
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: 'test/20-settings.png', fullPage: true });
+  await page.click('.top .icon'); await page.click('text=All in order'); await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'test/21-wood.png' });
+  await page.reload(); await page.waitForTimeout(500);
+  console.log('persisted:', await page.evaluate(() => JSON.parse(localStorage.getItem('clt.settings.v1')).pieceSet));
+  console.log('errors', errs); await browser.close();
+})();

@@ -1,0 +1,10 @@
+[Event "Edge"]
+[SetUp "1"]
+[FEN "4k3/1P6/8/8/8/8/8/R3K2R w KQ - 0 40"]
+
+40. O-O (40. 0-0-0 Kd7) (40. b8=N Kf7) 40... Kd7 41. b8=Q *
+
+[Event "Black start"]
+[FEN "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"]
+
+1... e5! 2. Nf3?! Nc6 {comment [%clk 0:01:00] here} 3. e2e3 *

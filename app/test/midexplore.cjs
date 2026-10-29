@@ -1,0 +1,22 @@
+const { chromium } = require('playwright'); const path = require('path');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })).newPage();
+  const errs = []; page.on('pageerror', e => errs.push(e.message));
+  await page.goto('file://' + path.resolve('dist/index.html'));
+  await page.setInputFiles('input[type=file]', 'test/sample.pgn');
+  await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
+  await page.waitForTimeout(3800);
+  await page.click('text=All in order'); await page.waitForTimeout(1100);
+  const sq = async (k) => { const b = await page.locator('.trainer cg-board').boundingBox(); const f=k.charCodeAt(0)-97, r=+k[1], s=b.width/8; return { x:b.x+(7-f+0.5)*s, y:b.y+(r-0.5)*s }; };
+  const move = async (u) => { const a=await sq(u.slice(0,2)), c=await sq(u.slice(2,4)); await page.mouse.click(a.x,a.y); await page.waitForTimeout(60); await page.mouse.click(c.x,c.y); await page.waitForTimeout(800); };
+  await move('c7c5'); await move('d7d6');
+  await page.screenshot({ path: 'test/25-midline.png' });
+  await page.click('.trainer .icon-btn'); await page.waitForTimeout(400);
+  console.log('explorer:', await page.locator('.psearch .tprog').innerText(), '| crumbs:', (await page.locator('.crumbs').innerText()).replace(/\n/g, ' '), '| future:', await page.locator('.crumb.future').count());
+  await page.click('text=‹ Back to training'); await page.waitForTimeout(400);
+  console.log('back:', await page.locator('.trainer .status').innerText(), '| moves:', (await page.locator('.trainer .movelist').innerText()).replace(/\s+/g, ' '));
+  for (const m of ['c5d4','g8f6','a7a6','e7e5','c8e6']) await move(m);
+  console.log('end:', await page.locator('.trainer .status').innerText());
+  console.log('errors', errs); await browser.close();
+})();

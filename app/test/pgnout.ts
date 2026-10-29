@@ -1,0 +1,12 @@
+import { readFileSync } from 'fs';
+import { parsePgn, linesToPgn, formatMoves } from '../src/pgn';
+const games = parsePgn(readFileSync('test/sample.pgn', 'utf8'));
+const lines = games[0].lines;
+const pgn = linesToPgn(lines, { Event: 'Selected lines', Orientation: 'black' });
+console.log(pgn);
+const back = parsePgn(pgn)[0].lines.map((l) => formatMoves(l.startFen, l.moves));
+const orig = lines.map((l) => formatMoves(l.startFen, l.moves));
+console.log('round-trip same lines:', JSON.stringify(back.sort()) === JSON.stringify(orig.sort()));
+const edge = parsePgn(readFileSync('test/edge.pgn', 'utf8'));
+const p2 = linesToPgn(edge[0].lines, { Event: 'x' });
+console.log(p2); console.log('edge round-trip:', JSON.stringify(parsePgn(p2)[0].lines.map(l=>l.id)) === JSON.stringify(edge[0].lines.map(l=>l.id)));

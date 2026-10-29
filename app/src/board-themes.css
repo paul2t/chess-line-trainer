@@ -1,0 +1,56 @@
+/* Board interaction colours and coordinates. The board image and piece set are injected by theme.ts. */
+
+/** Interactive board square colors */
+cg-board square.move-dest {
+  background: radial-gradient(rgba(20, 85, 30, 0.5) 22%, #208530 0, rgba(0, 0, 0, 0.3) 0, rgba(0, 0, 0, 0) 0);
+}
+cg-board square.premove-dest {
+  background: radial-gradient(rgba(20, 30, 85, 0.5) 22%, #203085 0, rgba(0, 0, 0, 0.3) 0, rgba(0, 0, 0, 0) 0);
+}
+cg-board square.oc.move-dest {
+  background: radial-gradient(transparent 0%, transparent 80%, rgba(20, 85, 0, 0.3) 80%);
+}
+cg-board square.oc.premove-dest {
+  background: radial-gradient(transparent 0%, transparent 80%, rgba(20, 30, 85, 0.2) 80%);
+}
+cg-board square.move-dest:hover {
+  background: rgba(20, 85, 30, 0.3);
+}
+cg-board square.premove-dest:hover {
+  background: rgba(20, 30, 85, 0.2);
+}
+cg-board square.last-move {
+  background-color: rgba(155, 199, 0, 0.41);
+}
+cg-board square.selected {
+  background-color: rgba(20, 85, 30, 0.5);
+}
+cg-board square.check {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 0, 0, 1) 0%,
+    rgba(231, 0, 0, 1) 25%,
+    rgba(169, 0, 0, 0) 89%,
+    rgba(158, 0, 0, 0) 100%
+  );
+}
+cg-board square.current-premove {
+  background-color: rgba(20, 30, 85, 0.5);
+}
+
+
+/* Coordinates: children are always ordered 1→8 / a→h; for White the a-file and rank 1 start on a dark
+   square, for Black the h-file and rank 8 do. */
+.cg-wrap coords { opacity: 1; font-family: system-ui, sans-serif; font-weight: 700; font-size: clamp(9px, 2.8vw, 13px); line-height: 1; }
+coords.ranks:not(.black) coord:nth-child(odd),
+coords.files:not(.black) coord:nth-child(odd),
+coords.ranks.black coord:nth-child(even),
+coords.files.black coord:nth-child(even) { color: var(--coord-on-dark); }
+coords.ranks:not(.black) coord:nth-child(even),
+coords.files:not(.black) coord:nth-child(even),
+coords.ranks.black coord:nth-child(odd),
+coords.files.black coord:nth-child(odd) { color: var(--coord-on-light); }
+.cg-wrap coords.ranks { left: 0; top: 0; width: auto; height: 100%; }
+.cg-wrap coords.ranks coord { transform: none; flex: 1 1 0; padding: 2px 0 0 3px; }
+.cg-wrap coords.files { left: 0; bottom: 0; width: 100%; height: auto; text-transform: lowercase; text-align: right; }
+.cg-wrap coords.files coord { flex: 1 1 0; padding: 0 3px 2px 0; }
