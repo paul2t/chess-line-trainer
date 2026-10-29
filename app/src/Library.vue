@@ -13,7 +13,7 @@ import { lineGames, popularity, fmtGames, missingReplies, missingLabel, lichess 
 const emit = defineEmits<{
   (e: 'start', mode: Mode, ids: string[]): void;
   (e: 'toast', msg: string): void;
-  (e: 'search', init?: { fen: string; moves: string[] }): void;
+  (e: 'search', init?: { fen: string; moves: string[]; color?: Color }): void;
 }>();
 
 const now = ref(Date.now());
@@ -413,7 +413,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
           <div class="small muted">{{ m.sample.item.chapter.name }} · {{ m.sample.item.title }}</div>
           <div class="ltext">{{ missingLabel(m) }} <b class="missing">→ {{ m.san }}</b> <span class="gcount">{{ Math.round(m.share * 100) }}% · {{ fmtGames(m.games) }} games</span></div>
           <div class="confacts">
-            <a href="#" @click.prevent="emit('search', { fen: m.sample.item.line.startFen, moves: m.sample.item.line.moves.slice(0, m.sample.ply).map((x) => x.uci) })">Open in explorer</a>
+            <a href="#" @click.prevent="emit('search', { fen: m.sample.item.line.startFen, moves: m.sample.item.line.moves.slice(0, m.sample.ply).map((x) => x.uci), color: m.color })">Open in explorer</a>
           </div>
         </div>
         <button v-if="missingReplies.length > missShown" class="btn wide" @click="missShown += 30">Show more ({{ missingReplies.length - missShown }})</button>

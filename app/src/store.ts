@@ -625,6 +625,6 @@ export const conflicts = computed<Conflict[]>(() => {
 });
 
 /** Position (start FEN + moves) where a conflict happens, for the search screen / lichess. */
-export function conflictPosition(c: Conflict): { fen: string; moves: string[] } {
-  return { fen: c.sample.item.line.startFen, moves: c.sample.item.line.moves.slice(0, c.sample.ply).map((m) => m.uci) };
+export function conflictPosition(c: Conflict): { fen: string; moves: string[]; color: Color } {
+  return { fen: c.sample.item.line.startFen, moves: c.sample.item.line.moves.slice(0, c.sample.ply).map((m) => m.uci), color: c.color };
 }
