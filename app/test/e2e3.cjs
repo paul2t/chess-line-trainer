@@ -6,7 +6,7 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
   await page.click('.seg button:has-text("Split by side")'); await page.click('.modal .btn.primary');
-  await page.locator('.lrow .cb').nth(7).click();
+  await page.locator('.lrow .cb').nth(2).click(); // White tab: London, London 1...Nf6, Game 3
   console.log(await page.locator('.scope').innerText());
   const sq = async (k) => { const b = await page.locator('cg-board').boundingBox(); const f=k.charCodeAt(0)-97, r=+k[1], s=b.width/8; return { x:b.x+(f+0.5)*s, y:b.y+(8-r+0.5)*s }; };
   const move = async (u) => { const a=await sq(u.slice(0,2)), c=await sq(u.slice(2,4)); await page.mouse.click(a.x,a.y); await page.waitForTimeout(60); await page.mouse.click(c.x,c.y); await page.waitForTimeout(800); };

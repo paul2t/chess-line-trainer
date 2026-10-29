@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import {
-  state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setChapterDisabled, moveLine, createChapter, isOff,
+  state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setChapterDisabled, moveLine, moveChapter, createChapter, isOff,
   priority, isToday, lineBadge, relDay, recentErrors, setDisabled, guessColor, conflicts, conflictPosition,
   type Conflict, type LibChapter, type LibEntry, type Mode, type Chapter,
 } from './store';
@@ -214,6 +214,7 @@ function confirmImport() {
   const msgs = pending.value.map((p) => {
     const r = importPgn(p.text, p.target === 'new' ? { kind: 'new', name: p.name.trim() || 'Chapter', color: p.color } : { kind: 'existing', chapterId: p.target });
     r.chapters.forEach((c) => open.add(c.id));
+    state.settings.libraryTab = r.chapters[0].color;
     return `${r.chapters.map((c) => c.name).join(' + ')}: ${r.added} line(s) added${r.skipped ? `, ${r.skipped} already there` : ''}`;
   });
   pending.value = [];
@@ -225,6 +226,21 @@ function setAllPending(c: Color | 'auto') {
 }
 
 /* ---------- chapter & line actions ---------- */
+const reordering = ref(false);
+/** Side tab: White or Black chapters (falls back to the side that has chapters). */
+const sideCount = (color: Color) => state.chapters.filter((c) => c.color === color).length;
+const tab = computed<Color>(() => {
+  const t = state.settings.libraryTab;
+  return sideCount(t) || !sideCount(t === 'w' ? 'b' : 'w') ? t : t === 'w' ? 'b' : 'w';
+});
+const tabChapters = computed(() => library.value.filter((c) => c.chapter.color === tab.value));
+const tabOrder = computed(() => state.chapters.filter((c) => c.color === tab.value));
+/** Move a chapter within its side group: swap with the neighbour (or go to the group's top). */
+function shift(items: Chapter[], i: number, to: number) {
+  const target = items[to];
+  if (!target) return;
+  moveChapter(items[i].id, state.chapters.indexOf(target));
+}
 const menu = ref<null | { kind: 'chapter'; c: LibChapter } | { kind: 'line'; c: LibChapter; e: LibEntry } | { kind: 'move'; c: LibChapter; e: LibEntry }>(null);
 async function delChapter(c: LibChapter) {
   menu.value = null;
@@ -400,7 +416,11 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
 
     <div class="lib-head">
       <h2>Chapters</h2>
-      <div>
+      <div v-if="reordering">
+        <button class="btn sm primary" @click="reordering = false">Done</button>
+      </div>
+      <div v-else>
+        <button v-if="tabOrder.length > 1" class="btn sm" @click="reordering = true">⇅ Reorder</button>
         <button class="btn sm" @click="paste.show = !paste.show">Paste</button>
         <button class="btn sm primary" @click="fileInput?.click()">+ Import PGN</button>
         <input ref="fileInput" type="file" multiple hidden @change="onFiles" />
@@ -487,11 +507,28 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       <p>Tap <b>+ Import PGN</b> to pick one or more .pgn files: each becomes a chapter, each game in it a line to train. You can also add lines from the explorer.</p>
     </div>
 
-    <section v-for="c in library" :key="c.chapter.id" class="card file">
+    <div v-if="state.chapters.length" class="seg side-tabs">
+      <button :class="{ on: tab === 'w' }" @click="state.settings.libraryTab = 'w'">♔ White <span class="tabn">{{ sideCount('w') }}</span></button>
+      <button :class="{ on: tab === 'b' }" @click="state.settings.libraryTab = 'b'">♚ Black <span class="tabn">{{ sideCount('b') }}</span></button>
+    </div>
+
+    <section v-if="reordering" class="card reorder">
+      <div v-for="(c, i) in tabOrder" :key="c.id" class="rrow">
+        <span class="rname">{{ c.name }} <span class="muted small">· {{ c.lines.length }}</span></span>
+        <button class="btn sm" :disabled="i === 0" @click="shift(tabOrder, i, 0)" aria-label="Move to top">⤒</button>
+        <button class="btn sm" :disabled="i === 0" @click="shift(tabOrder, i, i - 1)" aria-label="Move up">↑</button>
+        <button class="btn sm" :disabled="i === tabOrder.length - 1" @click="shift(tabOrder, i, i + 1)" aria-label="Move down">↓</button>
+      </div>
+    </section>
+
+    <p v-if="!reordering && state.chapters.length && !tabChapters.length" class="small muted center">No {{ tab === 'w' ? 'White' : 'Black' }} chapter yet.</p>
+
+    <template v-if="!reordering">
+    <section v-for="c in tabChapters" :key="c.chapter.id" class="card file">
       <div :class="['frow', { off: c.chapter.disabled || allOff(chapterIds(c)) }]">
         <span :class="['cb', selState(chapterIds(c))]" @click="toggleSel(chapterIds(c))"></span>
         <div class="fmain" @click="toggleOpen(c.chapter.id)">
-          <div class="fname"><span class="sidemark" :title="c.chapter.color === 'w' ? 'You play White' : 'You play Black'">{{ c.chapter.color === 'w' ? '♔' : '♚' }}</span> {{ c.chapter.name }}<span v-if="c.chapter.disabled || allOff(chapterIds(c))" class="badge b-off">off</span></div>
+          <div class="fname">{{ c.chapter.name }}<span v-if="c.chapter.disabled || allOff(chapterIds(c))" class="badge b-off">off</span></div>
           <div class="fmeta">
             {{ c.lines.length }} line{{ c.lines.length === 1 ? '' : 's' }}
             <template v-for="cc in [counts(chapterIds(c))]" :key="0">
@@ -537,5 +574,6 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         <div v-if="!c.lines.length" class="small muted">No line yet — import a PGN into this chapter or add lines from the explorer.</div>
       </div>
     </section>
+    </template>
   </div>
 </template>

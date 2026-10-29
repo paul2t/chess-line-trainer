@@ -11,8 +11,10 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.waitForTimeout(200);
   console.log('user-select on line text:', await page.locator('.library .lmain').first().evaluate(e => getComputedStyle(e).userSelect || getComputedStyle(e).webkitUserSelect));
   // select 3 Najdorf lines + London line, copy
+  await page.click('.side-tabs button:has-text("Black")'); await page.waitForTimeout(100);
   for (const i of [0, 1, 2]) await page.locator('.library .lrow .cb').nth(i).click();
-  await page.locator('.library .lrow .cb').nth(5).click();
+  await page.click('.side-tabs button:has-text("White")'); await page.waitForTimeout(100);
+  await page.locator('.library .lrow .cb').nth(0).click();
   await page.click('.selbar >> text=Copy PGN'); await page.waitForTimeout(300);
   console.log('toast:', await page.locator('.toast').innerText());
   const clip = await page.evaluate(() => navigator.clipboard.readText());

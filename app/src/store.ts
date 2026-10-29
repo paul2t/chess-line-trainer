@@ -75,6 +75,8 @@ export interface Settings {
   lichessSpeeds: string[];
   /** Flag opponent replies played at least this % of the time that your lines don't cover. */
   missingThreshold: number;
+  /** Side tab shown in the library. */
+  libraryTab: Color;
 }
 
 
@@ -192,7 +194,7 @@ export function normalizeChapters(chs: Chapter[]): boolean {
 export const state = reactive({
   chapters: initialChapters(),
   stats: load<Record<string, LineStat>>(K_STATS, {}),
-  settings: { sessionSize: 10, autoNext: true, repeatFailed: true, opponentDelay: 450, theme: 'blue3', pieceSet: 'cburnett', sound: true, volume: 0.7, searchColor: 'all', lichessRatings: ['400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500'], lichessSpeeds: ['blitz', 'rapid', 'classical'], missingThreshold: 10, ...load<Partial<Settings>>(K_SETTINGS, {}) } as Settings,
+  settings: { sessionSize: 10, autoNext: true, repeatFailed: true, opponentDelay: 450, theme: 'blue3', pieceSet: 'cburnett', sound: true, volume: 0.7, searchColor: 'all', lichessRatings: ['400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500'], lichessSpeeds: ['blitz', 'rapid', 'classical'], missingThreshold: 10, libraryTab: 'w', ...load<Partial<Settings>>(K_SETTINGS, {}) } as Settings,
   selection: load<string[]>(K_SEL, []),
   /** Lines excluded from training (line id → true). */
   disabled: load<Record<string, true>>(K_DIS, {}),
@@ -202,17 +204,30 @@ export const state = reactive({
   metaUpdated: load<number>(K_META, 0),
 });
 
-let tFiles = 0, tStats = 0, tMisc = 0;
-watch(() => state.chapters, () => { clearTimeout(tFiles); tFiles = window.setTimeout(() => save(K_CHAPTERS, state.chapters), 200); }, { deep: true, immediate: true });
-watch(() => state.stats, () => { clearTimeout(tStats); tStats = window.setTimeout(() => save(K_STATS, state.stats), 200); }, { deep: true });
+/** Saves are debounced; pending ones are written at once when the page is hidden or closed. */
+const pendingSaves = new Map<string, () => void>();
+function saveSoon(key: string, fn: () => void, ms = 200) {
+  pendingSaves.set(key, fn);
+  window.setTimeout(() => { const f = pendingSaves.get(key); if (f === fn) { pendingSaves.delete(key); fn(); } }, ms);
+}
+export function flushSaves() {
+  for (const fn of pendingSaves.values()) fn();
+  pendingSaves.clear();
+}
+window.addEventListener('pagehide', flushSaves);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSaves(); });
+
+let tMisc = 0;
+watch(() => state.chapters, () => saveSoon(K_CHAPTERS, () => save(K_CHAPTERS, state.chapters)), { deep: true, immediate: true });
+watch(() => state.stats, () => saveSoon(K_STATS, () => save(K_STATS, state.stats)), { deep: true });
 /** Set while applying data that came from the cloud, so it isn't stamped as a local edit. */
 export const applying = { remote: false };
 watch(() => [state.settings, state.selection, state.disabled], () => {
   if (!applying.remote) state.metaUpdated = Date.now();
-  clearTimeout(tMisc);
-  tMisc = window.setTimeout(() => {
+  void tMisc;
+  saveSoon('misc', () => {
     save(K_SETTINGS, state.settings); save(K_SEL, state.selection); save(K_DIS, state.disabled); save(K_META, state.metaUpdated);
-  }, 200);
+  });
 }, { deep: true });
 watch(() => state.deletedChapters, () => save(K_DEL, state.deletedChapters), { deep: true });
 
@@ -363,6 +378,16 @@ export function addLine(chapterId: string, title: string, startFen: string, ucis
   ch.lines.push(storeLine(line, title));
   touch(ch);
   return true;
+}
+
+/** Move a chapter to a new position in the list (display order). */
+export function moveChapter(id: string, to: number) {
+  const from = state.chapters.findIndex((c) => c.id === id);
+  if (from < 0) return;
+  to = Math.max(0, Math.min(state.chapters.length - 1, to));
+  if (to === from) return;
+  const [c] = state.chapters.splice(from, 1);
+  state.chapters.splice(to, 0, c);
 }
 
 export function removeChapter(id: string) {
