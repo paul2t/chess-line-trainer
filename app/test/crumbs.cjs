@@ -4,7 +4,7 @@ const { chromium } = require('playwright'); const path = require('path');
   const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })).newPage();
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
+  await page.click('.pend-block .seg button:has-text("Black")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(3800);
   await page.click('text=Find & explore lines'); await page.waitForTimeout(300);
   await page.click('.ctl-row .seg >> nth=1 >> text=Black');

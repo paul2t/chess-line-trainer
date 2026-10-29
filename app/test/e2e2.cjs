@@ -7,7 +7,7 @@ const path = require('path');
   const errs = []; page.on('pageerror', e => errs.push(e.message));
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
+  await page.click('.pend-block .seg button:has-text("Black")'); await page.click('.modal .btn.primary');
   const sq = async (key) => { const b = await page.locator('cg-board').boundingBox(); const f = key.charCodeAt(0)-97, r=+key[1], s=b.width/8; return { x: b.x+(7-f+0.5)*s, y: b.y+(r-0.5)*s }; };
   const move = async (u) => { const a=await sq(u.slice(0,2)), c=await sq(u.slice(2,4)); await page.mouse.click(a.x,a.y); await page.waitForTimeout(60); await page.mouse.click(c.x,c.y); await page.waitForTimeout(700); };
   const st = () => page.locator('.status').innerText();

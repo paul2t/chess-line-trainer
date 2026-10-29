@@ -7,7 +7,7 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.waitForSelector('.top'); console.log('load ms', Date.now() - t0);
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
+  await page.click('.pend-block .seg button:has-text("Black")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(3800);
   await page.click('.top .icon');
   console.log('boards:', await page.locator('.themes').nth(0).locator('.theme-pick').count(), 'sets:', await page.locator('.themes').nth(1).locator('.theme-pick').count());

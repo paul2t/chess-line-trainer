@@ -4,7 +4,7 @@ const { chromium } = require('playwright'); const path = require('path');
   const page = await (await browser.newContext({ viewport: { width: 375, height: 760 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })).newPage();
   const errs = []; page.on('pageerror', e => errs.push(e.message));
   await page.goto('file://' + path.resolve('dist/index.html'));
-  await page.setInputFiles('input[type=file]', 'test/caro.pgn'); await page.waitForSelector('.modal'); await page.click('.modal .btn.primary'); await page.waitForTimeout(200);
+  await page.setInputFiles('input[type=file]', 'test/caro.pgn'); await page.waitForSelector('.modal'); await page.click('.pend-block .seg button:has-text("Black")'); await page.click('.modal .btn.primary'); await page.waitForTimeout(200);
   const view = async () => `[${await page.locator('.side-tabs .on').innerText()}] ` + (await page.locator('.library .fname').allInnerTexts()).join(' | ');
   console.log('after Caro import:', await view());
   await page.setInputFiles('input[type=file]', 'test/sample.pgn'); await page.waitForSelector('.modal');

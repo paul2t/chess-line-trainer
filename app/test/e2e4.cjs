@@ -5,7 +5,7 @@ const { chromium } = require('playwright'); const path = require('path');
   const errs = []; page.on('pageerror', e => errs.push(e.message));
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
+  await page.click('.pend-block .seg button:has-text("Black")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(200);
   await page.locator('.lrow .cb').first().click();
   const sq = async (k) => { const b = await page.locator('cg-board').boundingBox(); const f=k.charCodeAt(0)-97, r=+k[1], s=b.width/8; return { x:b.x+(7-f+0.5)*s, y:b.y+(r-0.5)*s }; };

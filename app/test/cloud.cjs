@@ -24,7 +24,7 @@ const store = {}; // docPath -> json
   await A.page.waitForTimeout(800);
   console.log('A status:', await A.page.locator('.cloud').innerText());
   await A.page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await A.page.click('.seg button:has-text("Black")'); await A.page.click('.modal .btn.primary');
+  await A.page.click('.pend-block .seg button:has-text("Black")'); await A.page.click('.modal .btn.primary');
   // train one line with a mistake via "Show move"
   await A.page.click('.train-card .btn.primary'); await A.page.waitForTimeout(1000);
   await A.page.click('.tbtns .btn >> nth=1'); // show move (mistake)

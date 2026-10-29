@@ -5,7 +5,7 @@ const { chromium } = require('playwright'); const path = require('path');
   const errs = []; page.on('pageerror', e => errs.push(e.message));
   await page.goto('file://' + path.resolve('dist/index.html'));
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Split by side")'); await page.click('.modal .btn.primary');
+  await page.click('.pend-block .seg button:has-text("Split by side")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(3800);
   await page.click('.fmain');
   await page.click('.gmain >> nth=1'); await page.waitForTimeout(200);

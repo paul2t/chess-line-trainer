@@ -28,7 +28,7 @@ const { Chess } = require('chess.js');
   await page.goto(url);
   await page.evaluate(() => { localStorage.setItem('clt.settings.v1', JSON.stringify({ missingThreshold: 3 })); localStorage.setItem('clt.test.gap', '30'); localStorage.setItem('clt.lichess.pkce.v1', JSON.stringify({ verifier: 'v', state: 'S1' })); });
   await page.setInputFiles('input[type=file]', 'test/sample.pgn');
-  await page.click('.seg button:has-text("Black")'); await page.click('.modal .btn.primary');
+  await page.click('.pend-block .seg button:has-text("Black")'); await page.click('.modal .btn.primary');
   await page.waitForTimeout(3800);
   // come back from lichess OAuth with a code
   await page.goto(url + '?code=abc&state=S1');

@@ -193,7 +193,10 @@ const hits = computed<Hit[]>(() => {
   }
   return inactiveLast(out);
 });
-const trainable = computed(() => hits.value.filter((h) => !isOff(h.item.line.id) && (!fromHere.value || h.userLeft)));
+/** Training uses one side at a time: the colour filter, or else the side the board is shown from. */
+const trainSide = computed<Color>(() => (color.value !== 'all' ? color.value : orientation.value === 'white' ? 'w' : 'b'));
+const trainSideName = computed(() => (trainSide.value === 'w' ? 'White' : 'Black'));
+const trainable = computed(() => hits.value.filter((h) => h.item.color === trainSide.value && !isOff(h.item.line.id) && (!fromHere.value || h.userLeft)));
 
 /* ---------- explorer: opponent moves and your answers ---------- */
 interface Reply { uci: string; san: string; n: number }
@@ -354,7 +357,7 @@ const moveHits = computed<MoveHit[]>(() => {
   return inactiveLast(out);
 });
 const moveTrainable = computed(() =>
-  moveHits.value.filter((h) => !isOff(h.item.line.id) && (!fromFirst.value || userMovesAfter(h.item, h.first))),
+  moveHits.value.filter((h) => h.item.color === trainSide.value && !isOff(h.item.line.id) && (!fromFirst.value || userMovesAfter(h.item, h.first))),
 );
 
 /** Load a whole line on the board, positioned after `cursorPly` moves (step through it with ‹ ›). */
@@ -550,7 +553,7 @@ onMounted(() => {
         </div>
         <label class="set" v-if="!fromTraining">Start training from this position <input type="checkbox" v-model="fromHere" /></label>
         <div class="row2" v-if="!fromTraining">
-          <button class="btn primary wide" @click="trainPosition" :disabled="!trainable.length">Train {{ trainable.length }}</button>
+          <button class="btn primary wide" @click="trainPosition" :disabled="!trainable.length">Train {{ trainable.length }} {{ trainSideName }}</button>
           <button class="btn wide" @click="selectIds(hits.map((h) => h.item.line.id))" :disabled="!hits.length">Select in library</button>
         </div>
         <div v-for="h in hits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: isOff(h.item.line.id) }]">
@@ -618,7 +621,7 @@ onMounted(() => {
         </div>
         <label class="set">Start training at the first matching move <input type="checkbox" v-model="fromFirst" /></label>
         <div class="row2">
-          <button class="btn primary wide" @click="trainMoves" :disabled="!moveTrainable.length">Train {{ moveTrainable.length }}</button>
+          <button class="btn primary wide" @click="trainMoves" :disabled="!moveTrainable.length">Train {{ moveTrainable.length }} {{ trainSideName }}</button>
           <button class="btn wide" @click="selectIds(moveHits.map((h) => h.item.line.id))" :disabled="!moveHits.length">Select in library</button>
         </div>
         <button class="btn wide" @click="exploreFound" :disabled="!foundActive">🔍 Explore these lines</button>

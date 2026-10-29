@@ -188,7 +188,8 @@ const summary = computed(() => {
 });
 
 function drillToday() {
-  const ids = [...allLines.value.keys()].filter((id) => !isOff(id) && state.stats[id]?.lm && new Date(state.stats[id].lm).toDateString() === new Date().toDateString());
+  const side = allLines.value.get(session.results[0]?.id ?? '')?.color ?? state.settings.libraryTab;
+  const ids = [...allLines.value.keys()].filter((id) => allLines.value.get(id)!.color === side && !isOff(id) && state.stats[id]?.lm && new Date(state.stats[id].lm).toDateString() === new Date().toDateString());
   if (ids.length) start('today', ids, {}, session.origin);
 }
 

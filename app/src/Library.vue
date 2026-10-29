@@ -28,12 +28,21 @@ function chapterIds(c: LibChapter): string[] {
   return [...new Set(c.lines.filter((e) => e.trainable).map((e) => e.line.id))];
 }
 
+/** Side tab (White / Black): the chapters shown AND the lines trained — one side at a time. */
+const sideCount = (color: Color) => state.chapters.filter((c) => c.color === color).length;
+const tab = computed<Color>(() => state.settings.libraryTab);
+const sideName = computed(() => (tab.value === 'w' ? 'White' : 'Black'));
+const onSide = (id: string) => allLines.value.get(id)?.color === tab.value;
+/** Selected lines of the open side (a selection on the other side is kept but not used here). */
+const sideSelection = computed(() => state.selection.filter(onSide));
+const otherSelected = computed(() => state.selection.length - sideSelection.value.length);
+
 const scopeIds = computed(() => {
-  const base = state.selection.length ? state.selection : [...allLines.value.keys()];
+  const base = sideSelection.value.length ? sideSelection.value : [...allLines.value.keys()].filter(onSide);
   return enabledIds(base);
 });
 const scopeLabel = computed(() =>
-  state.selection.length ? `${scopeIds.value.length} selected line${scopeIds.value.length === 1 ? '' : 's'}` : `all lines (${scopeIds.value.length})`,
+  sideSelection.value.length ? `${scopeIds.value.length} selected ${sideName.value} line${scopeIds.value.length === 1 ? '' : 's'}` : `all ${sideName.value} lines (${scopeIds.value.length})`,
 );
 
 /** Smart priority + a bonus for lines that are played a lot on lichess (most for lines never trained). */
@@ -196,10 +205,11 @@ const paste = reactive({ show: false, text: '' });
 interface Pending { name: string; text: string; color: Color | 'auto'; mixed: boolean; target: string /* 'new' or chapter id */; lines: number }
 const pending = ref<Pending[]>([]);
 
+/** New imports default to the side of the open tab ("Split by side" is offered for mixed files). */
 function pend(name: string, text: string): Pending {
   const g = guessColor(text);
   const lines = (text.match(/\[Event /g) ?? []).length;
-  return { name, text, color: g.color, mixed: g.mixed, target: 'new', lines };
+  return { name, text, color: state.settings.libraryTab, mixed: g.mixed, target: 'new', lines };
 }
 async function onFiles(ev: Event) {
   const files = (ev.target as HTMLInputElement).files;
@@ -231,12 +241,6 @@ function setAllPending(c: Color | 'auto') {
 
 /* ---------- chapter & line actions ---------- */
 const reordering = ref(false);
-/** Side tab: White or Black chapters (falls back to the side that has chapters). */
-const sideCount = (color: Color) => state.chapters.filter((c) => c.color === color).length;
-const tab = computed<Color>(() => {
-  const t = state.settings.libraryTab;
-  return sideCount(t) || !sideCount(t === 'w' ? 'b' : 'w') ? t : t === 'w' ? 'b' : 'w';
-});
 const tabChapters = computed(() => library.value.filter((c) => c.chapter.color === tab.value));
 const tabOrder = computed(() => state.chapters.filter((c) => c.color === tab.value));
 /** Move a chapter within its side group: swap with the neighbour (or go to the group's top). */
@@ -333,10 +337,16 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
 
 <template>
   <div class="library">
+    <div class="seg side-tabs">
+      <button :class="{ on: tab === 'w' }" @click="state.settings.libraryTab = 'w'">♔ White <span class="tabn">{{ sideCount('w') }}</span></button>
+      <button :class="{ on: tab === 'b' }" @click="state.settings.libraryTab = 'b'">♚ Black <span class="tabn">{{ sideCount('b') }}</span></button>
+    </div>
+
     <section class="card train-card">
       <div class="scope">
         Training <b>{{ scopeLabel }}</b>
-        <span v-if="state.selection.length" class="muted"> · <a href="#" @click.prevent="clearSel">use all</a></span>
+        <span v-if="sideSelection.length" class="muted"> · <a href="#" @click.prevent="clearSel">use all</a></span>
+        <div v-if="otherSelected" class="small muted">{{ otherSelected }} selected line{{ otherSelected === 1 ? ' is' : 's are' }} on the {{ tab === 'w' ? 'Black' : 'White' }} tab</div>
       </div>
       <button class="btn primary big wide" @click="startSmart">
         Smart review <span class="pill">{{ smartCount }}</span>
@@ -419,7 +429,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
     </div>
 
     <div class="lib-head">
-      <h2>Chapters</h2>
+      <h2>{{ sideName }} chapters</h2>
       <div v-if="reordering">
         <button class="btn sm primary" @click="reordering = false">Done</button>
       </div>
@@ -511,11 +521,6 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       <p>Tap <b>+ Import PGN</b> to pick one or more .pgn files: each becomes a chapter, each game in it a line to train. You can also add lines from the explorer.</p>
     </div>
 
-    <div v-if="state.chapters.length" class="seg side-tabs">
-      <button :class="{ on: tab === 'w' }" @click="state.settings.libraryTab = 'w'">♔ White <span class="tabn">{{ sideCount('w') }}</span></button>
-      <button :class="{ on: tab === 'b' }" @click="state.settings.libraryTab = 'b'">♚ Black <span class="tabn">{{ sideCount('b') }}</span></button>
-    </div>
-
     <section v-if="reordering" class="card reorder">
       <div v-for="(c, i) in tabOrder" :key="c.id" class="rrow">
         <span class="rname">{{ c.name }} <span class="muted small">· {{ c.lines.length }}</span></span>
@@ -525,7 +530,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       </div>
     </section>
 
-    <p v-if="!reordering && state.chapters.length && !tabChapters.length" class="small muted center">No {{ tab === 'w' ? 'White' : 'Black' }} chapter yet.</p>
+    <p v-if="!reordering && state.chapters.length && !tabChapters.length" class="small muted center">No {{ sideName }} chapter yet — import a PGN or add lines from the explorer.</p>
 
     <template v-if="!reordering">
     <section v-for="c in tabChapters" :key="c.chapter.id" class="card file">
