@@ -30,7 +30,7 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.click('.ctl-row .seg >> nth=1 >> text=White'); await page.waitForTimeout(150);
   await page.click('.ctl-row .seg >> nth=0 >> text=Moves');
   await page.click('.ctl-row .seg >> nth=1 >> text=Black'); await page.waitForTimeout(150);
-  await page.fill('.psearch .card .inp', 'a6'); await page.waitForTimeout(200);
+  await page.fill('.psearch .card .inp >> nth=0', 'a6'); await page.waitForTimeout(200);
   await page.click('text=🔍 Explore these lines'); await page.waitForTimeout(400);
   console.log('explore orientation:', await page.locator('.psearch .cg-wrap').getAttribute('class'));
   await page.click('.ctl-row .seg >> nth=0 >> text=Moves'); await page.waitForTimeout(150);

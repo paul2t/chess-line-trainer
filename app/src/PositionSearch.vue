@@ -3,7 +3,8 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { Chess, type Square } from 'chess.js';
 import type { Key } from 'chessground/types';
 import Board from './Board.vue';
-import { DEFAULT_FEN, parsePgn, posKey, moveTokens, lichessUrl, type Color } from './pgn';
+import MiniBoard from './MiniBoard.vue';
+import { DEFAULT_FEN, parsePgn, posKey, moveTokens, lichessUrl, plyLabel, type Color } from './pgn';
 import { state, allLines, lineBadge, addLine, createChapter, isOff, type LibLine } from './store';
 import { playSound } from './sound';
 import { searchMemory, rememberSearch } from './searchMemory';
@@ -194,7 +195,13 @@ const hits = computed<Hit[]>(() => {
   return inactiveLast(out);
 });
 /** Training uses one side at a time: the colour filter, or else the side the board is shown from. */
-const trainSide = computed<Color>(() => (color.value !== 'all' ? color.value : orientation.value === 'white' ? 'w' : 'b'));
+const trainSide = computed<Color>(() => {
+  if (color.value !== 'all') return color.value;
+  // results of a single side: train that side; otherwise the side the board is shown from
+  const sides = new Set((tab.value === 'moves' ? moveHits.value : hits.value).map((h) => h.item.color));
+  if (sides.size === 1) return [...sides][0];
+  return orientation.value === 'white' ? 'w' : 'b';
+});
 const trainSideName = computed(() => (trainSide.value === 'w' ? 'White' : 'Black'));
 const trainable = computed(() => hits.value.filter((h) => h.item.color === trainSide.value && !isOff(h.item.line.id) && (!fromHere.value || h.userLeft)));
 
@@ -333,16 +340,73 @@ const moveBy = ref<'me' | 'opp'>('me');
 const fromFirst = ref(false);
 const normSan = (s: string) => s.replace(/[+#!?]/g, '').replace(/0/g, 'O');
 
-interface MoveHit { item: LibLine; plies: number[]; first: number }
+/* ---------- piece filters ---------- */
+const pieceQuery = ref('');
+type PieceCond = { color?: Color; piece: string; sq: number }; // sq: 0 = a8 … 63 = h1
+type PieceFilter = { kind: 'pieces'; conds: PieceCond[]; bad: string[] } | { kind: 'fen'; cells: string[] } | null;
+const sqIndex = (s: string) => (8 - +s[1]) * 8 + (s.charCodeAt(0) - 97);
+
+/** "BBg4 WBe3 Nf3 e4 We4 BPe5" (colour optional, pawn letter optional) or a pattern FEN. */
+const pieceFilter = computed<PieceFilter>(() => {
+  const q = pieceQuery.value.trim();
+  if (!q) return null;
+  const placement = q.split(/\s+/)[0];
+  if (/^[pnbrqkPNBRQK1-8]+(\/[pnbrqkPNBRQK1-8]+){7}$/.test(placement)) {
+    const cells: string[] = [];
+    for (const row of placement.split('/')) for (const ch of row) /\d/.test(ch) ? cells.push(...Array(+ch).fill('')) : cells.push(ch);
+    return cells.length === 64 ? { kind: 'fen', cells } : null;
+  }
+  const conds: PieceCond[] = [];
+  const bad: string[] = [];
+  for (const tok of q.split(/[\s,;]+/).filter(Boolean)) {
+    // "Bg4" = bishop on g4 (B as a colour needs a piece letter after it: "BBg4", "BPe5")
+    const m = tok.match(/^([WB])([KQRBNP])([a-h][1-8])$/) ?? tok.match(/^()([KQRBNP]?)([a-h][1-8])$/) ?? tok.match(/^(W)()([a-h][1-8])$/);
+    if (!m) { bad.push(tok); continue; }
+    conds.push({ color: m[1] === 'W' ? 'w' : m[1] === 'B' ? 'b' : undefined, piece: m[2] || 'P', sq: sqIndex(m[3]) });
+  }
+  return { kind: 'pieces', conds, bad };
+});
+
+const boardCache = new Map<string, string[]>();
+function cellsOf(key: string): string[] {
+  let b = boardCache.get(key);
+  if (!b) {
+    b = [];
+    for (const row of key.split(' ')[0].split('/')) for (const ch of row) /\d/.test(ch) ? b.push(...Array(+ch).fill('')) : b.push(ch);
+    boardCache.set(key, b);
+  }
+  return b;
+}
+function filterOk(key: string): boolean {
+  const f = pieceFilter.value;
+  if (!f) return true;
+  const b = cellsOf(key);
+  if (f.kind === 'fen') return f.cells.every((c, i) => !c || b[i] === c);
+  return f.conds.every((c) => {
+    const x = b[c.sq];
+    if (!x || x.toUpperCase() !== c.piece) return false;
+    return !c.color || (c.color === 'w') === (x === x.toUpperCase());
+  });
+}
+const filterActive = computed(() => !!pieceFilter.value && (pieceFilter.value.kind === 'fen' || pieceFilter.value.conds.length > 0));
+
+/**
+ * A hit = a line, the plies of its matching moves, and the positions where it is your turn to
+ * play that match the search (for an opponent move: right after it; for your move: just before it;
+ * with only piece filters: every position of yours matching them).
+ */
+interface MoveHit { item: LibLine; plies: number[]; first: number; occ: number[] }
 const moveTerms = computed(() =>
   moveQuery.value.split(/[\s,;]+/).map((x) => normSan(x.replace(/^\d+\.+/, ''))).filter(Boolean),
 );
+const searching = computed(() => moveTerms.value.length > 0 || filterActive.value);
 const moveHits = computed<MoveHit[]>(() => {
   const qs = moveTerms.value;
-  if (!qs.length) return [];
+  if (!qs.length && !filterActive.value) return [];
   const out: MoveHit[] = [];
   for (const it of allLines.value.values()) {
     if (!colorOk(it)) continue;
+    const n = it.line.moves.length;
     const plies: number[] = [];
     let all = true;
     for (const q of qs) {
@@ -352,10 +416,51 @@ const moveHits = computed<MoveHit[]>(() => {
       });
       if (!found) { all = false; break; }
     }
-    if (all) { plies.sort((a, b) => a - b); out.push({ item: it, plies, first: plies[0] }); }
+    if (!all) continue;
+    plies.sort((a, b) => a - b);
+    let occ: number[];
+    if (qs.length) occ = plies.map((i) => (moveBy.value === 'me' ? i : i + 1)).filter((p) => p <= n && filterOk(it.line.keys[p]));
+    else {
+      occ = [];
+      for (let p = 0; p < n; p++) if (isUserPly(it, p) && filterOk(it.line.keys[p])) occ.push(p);
+    }
+    if (!occ.length) continue;
+    out.push({ item: it, plies: qs.length ? plies : occ, first: qs.length ? plies[0] : occ[0], occ });
   }
   return inactiveLast(out);
 });
+
+/* ---------- boards view: one board per distinct position, grouped by your move ---------- */
+const resultView = ref<'lines' | 'boards'>('lines');
+interface BoardItem { id: string; key: string; my?: string; myLabel: string; last?: string; item: LibLine; p: number; lines: number; off: boolean }
+const boardGroups = computed(() => {
+  const items = new Map<string, BoardItem>();
+  for (const h of moveHits.value)
+    for (const p of h.occ) {
+      const mv = h.item.line.moves;
+      const my = mv[p];
+      const id = h.item.line.keys[p] + '|' + (my?.uci ?? '') + '|' + h.item.color;
+      const ex = items.get(id);
+      if (ex) { ex.lines++; ex.off &&= isOff(h.item.line.id); continue; }
+      items.set(id, {
+        id, key: h.item.line.keys[p], my: my?.uci, myLabel: my ? plyLabel(h.item.line.startFen, mv, p) : 'line ends',
+        last: mv[p - 1]?.uci, item: h.item, p, lines: 1, off: isOff(h.item.line.id),
+      });
+    }
+  const groups = new Map<string, BoardItem[]>();
+  for (const b of items.values()) {
+    const g = (b.my ? (mvSan(b) ?? '') : '—') + '|' + b.item.color;
+    groups.get(g)?.push(b) ?? groups.set(g, [b]);
+  }
+  return [...groups.entries()]
+    .map(([k, list]) => ({ key: k, san: k.split('|')[0], color: list[0].item.color, list }))
+    .sort((a, b) => b.list.length - a.list.length || a.san.localeCompare(b.san));
+});
+function mvSan(b: BoardItem): string | undefined {
+  return b.item.line.moves[b.p]?.san.replace(/[+#]/g, '');
+}
+const boardCount = computed(() => boardGroups.value.reduce((a, g) => a + g.list.length, 0));
+const boardsShown = ref(40);
 const moveTrainable = computed(() =>
   moveHits.value.filter((h) => h.item.color === trainSide.value && !isOff(h.item.line.id) && (!fromFirst.value || userMovesAfter(h.item, h.first))),
 );
@@ -411,11 +516,12 @@ function saveState() {
   rememberSearch({
     tab: tab.value, startFen: startFen.value, history: history.value.map((h) => ({ ...h })), cursor: cursor.value,
     orientation: orientation.value, query: query.value, moveQuery: moveQuery.value, moveBy: moveBy.value,
+    pieceQuery: pieceQuery.value, resultView: resultView.value,
     fromHere: fromHere.value, fromFirst: fromFirst.value, scope: scope.value ? [...scope.value] : null,
   });
 }
 let saveTimer = 0;
-watch([tab, history, cursor, orientation, query, moveQuery, moveBy, fromHere, fromFirst, scope], () => {
+watch([tab, history, cursor, orientation, query, moveQuery, moveBy, fromHere, fromFirst, scope, pieceQuery, resultView], () => {
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(saveState, 300);
 }, { deep: true });
@@ -423,6 +529,7 @@ function restoreState(): boolean {
   const m = searchMemory.saved;
   if (!m) return false;
   tab.value = m.tab; query.value = m.query; moveQuery.value = m.moveQuery; moveBy.value = m.moveBy;
+  pieceQuery.value = m.pieceQuery ?? ''; resultView.value = m.resultView ?? 'lines';
   fromHere.value = m.fromHere; fromFirst.value = m.fromFirst; orientation.value = m.orientation;
   scope.value = m.scope ? new Set(m.scope) : null;
   load(m.startFen);
@@ -612,11 +719,23 @@ onMounted(() => {
           </div>
         </div>
         <p class="small muted" v-if="moveTerms.length > 1">Lines containing all of: {{ moveTerms.join(', ') }}</p>
+        <label class="pick-label">Pieces on the board <span class="muted">(optional)</span></label>
+        <input class="inp" v-model="pieceQuery" placeholder="e.g. BBg4 WBe3 Nf3   or a FEN pattern" autocapitalize="off" autocomplete="off" />
+        <p class="small muted">
+          <b>BBg4</b> black bishop on g4 · <b>WBe3</b> white bishop · <b>Nf3</b> knight of either colour · <b>e4</b>/<b>We4</b>/<b>BPe5</b> pawns.
+          Or paste a FEN: its pieces must be there, its empty squares can hold anything.
+          <span v-if="pieceFilter && pieceFilter.kind === 'pieces' && pieceFilter.bad.length" class="warn"> Not understood: {{ pieceFilter.bad.join(', ') }}</span>
+          <span v-else-if="pieceFilter && pieceFilter.kind === 'fen'" class="gcount"> FEN pattern ✓</span>
+        </p>
       </section>
 
-      <section class="card" v-if="moveTerms.length">
+      <section class="card" v-if="searching">
+        <div class="seg view-tabs">
+          <button :class="{ on: resultView === 'lines' }" @click="resultView = 'lines'">Lines</button>
+          <button :class="{ on: resultView === 'boards' }" @click="resultView = 'boards'">Boards</button>
+        </div>
         <div class="presult">
-          <b>{{ moveHits.length }}</b> line{{ moveHits.length === 1 ? '' : 's' }} found
+          <b>{{ moveHits.length }}</b> line{{ moveHits.length === 1 ? '' : 's' }} found<template v-if="resultView === 'boards'"> · <b>{{ boardCount }}</b> position{{ boardCount === 1 ? '' : 's' }}</template>
           <span class="muted small" v-if="moveHits.length !== moveTrainable.length"> · {{ moveTrainable.length }} trainable</span>
         </div>
         <label class="set">Start training at the first matching move <input type="checkbox" v-model="fromFirst" /></label>
@@ -625,6 +744,22 @@ onMounted(() => {
           <button class="btn wide" @click="selectIds(moveHits.map((h) => h.item.line.id))" :disabled="!moveHits.length">Select in library</button>
         </div>
         <button class="btn wide" @click="exploreFound" :disabled="!foundActive">🔍 Explore these lines</button>
+
+        <template v-if="resultView === 'boards'">
+          <p class="small muted">Each board is a position where it's your move: the last move is highlighted, the arrow is your move in your lines. Grouped by your move.</p>
+          <template v-for="g in boardGroups" :key="g.key">
+            <h3 class="bgroup">{{ g.san }} <span class="muted small">· {{ g.list.length }} position{{ g.list.length === 1 ? '' : 's' }}{{ color === 'all' ? (g.color === 'w' ? ' · as White' : ' · as Black') : '' }}</span></h3>
+            <div class="bgrid">
+              <div v-for="b in g.list.slice(0, boardsShown)" :key="b.id" :class="['bcell', { off: b.off }]" @click="openLine(b.item, b.p)">
+                <MiniBoard :fen="b.key" :orientation="b.item.color === 'w' ? 'white' : 'black'" :last-move="b.last" :arrow="b.my" />
+                <div class="bcap small"><b>{{ b.myLabel }}</b> · {{ b.item.title }}<span v-if="b.lines > 1" class="muted"> +{{ b.lines - 1 }}</span></div>
+              </div>
+            </div>
+          </template>
+          <button v-if="boardGroups.some((g) => g.list.length > boardsShown)" class="btn wide" @click="boardsShown += 40">Show more boards</button>
+        </template>
+
+        <template v-else>
         <div v-for="h in moveHits.slice(0, shown)" :key="h.item.line.id" :class="['lrow', { off: isOff(h.item.line.id) }]">
           <div class="lmain" @click="openAt(h)">
             <div class="small muted">{{ h.item.chapter.name }} · {{ h.item.title }}</div>
@@ -637,6 +772,7 @@ onMounted(() => {
           </div>
         </div>
         <button v-if="moveHits.length > shown" class="btn wide" @click="shown += 60">Show more ({{ moveHits.length - shown }})</button>
+        </template>
       </section>
     </template>
   </div>

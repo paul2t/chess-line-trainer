@@ -3,6 +3,7 @@ export interface SavedSearch {
   tab: 'board' | 'moves'; startFen: string; history: { uci: string; san: string }[]; cursor: number;
   orientation: 'white' | 'black'; query: string; moveQuery: string; moveBy: 'me' | 'opp';
   fromHere: boolean; fromFirst: boolean; scope: string[] | null;
+  pieceQuery?: string; resultView?: 'lines' | 'boards';
 }
 
 const KEY = 'clt.search.v1';

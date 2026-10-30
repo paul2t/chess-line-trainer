@@ -12,7 +12,7 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.click('.ctl-row .seg >> nth=1 >> text=Black');
   for (const q of ['e6', 'a6', 'Bd7']) {
     await page.click('.ctl-row .seg >> nth=0 >> text=Moves'); await page.waitForTimeout(100);
-    await page.fill('.psearch .card .inp', q); await page.waitForTimeout(150);
+    await page.fill('.psearch .card .inp >> nth=0', q); await page.waitForTimeout(150);
     await page.click('text=🔍 Explore these lines'); await page.waitForTimeout(300);
     console.log(q, '->', (await page.locator('.crumbs').innerText()).replace(/\n/g, ' '), '| explorer:', (await page.locator('.explorer').innerText()).replace(/\n/g, ' ').slice(0, 90), '|', await page.locator('.psearch .cg-wrap').getAttribute('class'));
   }
