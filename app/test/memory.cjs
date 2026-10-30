@@ -37,7 +37,8 @@ const { chromium } = require('playwright'); const path = require('path');
   const crumbsAfter = (await page.locator('.crumbs').innerText()).replace(/\n/g, ' ');
   console.log('back in search:', await page.locator('.psearch .tprog').innerText(), '| same position:', crumbsBefore === crumbsAfter);
   await page.reload(); await page.waitForTimeout(800);
-  await page.click('text=Find & explore lines'); await page.waitForTimeout(400);
+  console.log('reload stays in search:', await page.locator('.psearch').isVisible());
+  if (!(await page.locator('.psearch').isVisible())) { await page.click('text=Find & explore lines'); await page.waitForTimeout(400); }
   console.log('after reload same position:', (await page.locator('.crumbs').innerText()).replace(/\n/g, ' ') === crumbsBefore);
   await page.click('.ctl-row .seg >> nth=0 >> text=Moves'); await page.waitForTimeout(200);
   console.log('moves query remembered:', await page.locator('.psearch .card .inp >> nth=0').inputValue());

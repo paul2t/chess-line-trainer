@@ -283,3 +283,5 @@ select.inp { appearance: auto; }
 .bgroup { margin: 14px 0 6px; }
 .view-tabs { display: flex; margin-bottom: 8px; }
 .view-tabs button { flex: 1; }
+
+.set.hide-off { border: 0; padding: 0 2px 6px; font-size: 14px; }

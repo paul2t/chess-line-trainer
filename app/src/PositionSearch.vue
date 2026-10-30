@@ -7,7 +7,7 @@ import MiniBoard from './MiniBoard.vue';
 import { DEFAULT_FEN, parsePgn, posKey, moveTokens, lichessUrl, plyLabel, type Color } from './pgn';
 import { state, allLines, lineBadge, addLine, createChapter, isOff, type LibLine } from './store';
 import { playSound } from './sound';
-import { searchMemory, rememberSearch } from './searchMemory';
+import { searchMemory, rememberSearch, type SavedSearch } from './searchMemory';
 import { explorer as lichessData, moveGames, fmtGames, lichess as lichessState } from './lichess';
 
 const props = defineProps<{ init?: { fen: string; moves: string[]; cursor?: number; color?: Color }; fromTraining?: boolean; restore?: boolean }>();
@@ -22,7 +22,13 @@ const color = computed<'all' | Color>({
   get: () => state.settings.searchColor,
   set: (v) => (state.settings.searchColor = v),
 });
-const colorOk = (it: LibLine) => color.value === 'all' || it.color === color.value;
+/** Lines the search looks at: the colour filter, the selection (if asked) and switched-off lines unless shown. */
+const selectedSet = computed(() => new Set(state.selection));
+const onlySelected = computed(() => state.settings.searchSelectedOnly && state.selection.length > 0);
+const colorOk = (it: LibLine) =>
+  (color.value === 'all' || it.color === color.value) &&
+  !(state.settings.searchHideOff && isOff(it.line.id)) &&
+  (!onlySelected.value || selectedSet.value.has(it.line.id));
 
 /* ================= board / position ================= */
 
@@ -419,7 +425,8 @@ const moveHits = computed<MoveHit[]>(() => {
     if (!all) continue;
     plies.sort((a, b) => a - b);
     let occ: number[];
-    if (qs.length) occ = plies.map((i) => (moveBy.value === 'me' ? i : i + 1)).filter((p) => p <= n && filterOk(it.line.keys[p]));
+    // the position shown: after the matched move (yours: then the opponent's replies; theirs: then yours)
+    if (qs.length) occ = plies.map((i) => i + 1).filter((p) => p <= n && filterOk(it.line.keys[p]));
     else {
       occ = [];
       for (let p = 0; p < n; p++) if (isUserPly(it, p) && filterOk(it.line.keys[p])) occ.push(p);
@@ -432,33 +439,57 @@ const moveHits = computed<MoveHit[]>(() => {
 
 /* ---------- boards view: one board per distinct position, grouped by your move ---------- */
 const resultView = ref<'lines' | 'boards'>('lines');
-interface BoardItem { id: string; key: string; my?: string; myLabel: string; last?: string; item: LibLine; p: number; lines: number; off: boolean }
+/**
+ * A board per distinct position, grouped by "your move":
+ * - opponent move searched (or pieces only): your next move is the arrow and the group;
+ * - your move searched: it's the highlighted last move and the group, the arrows are all the
+ *   opponent replies your lines cover from there.
+ */
+interface BoardItem { id: string; key: string; group: string; label: string; last?: string; arrows: string[]; item: LibLine; p: number; lines: number; off: boolean }
+const mineSearch = computed(() => moveBy.value === 'me' && moveTerms.value.length > 0);
+
+/** Opponent moves your (searched) lines play from a position. */
+function oppReplies(key: string, color: Color): string[] {
+  const out = new Set<string>();
+  for (const it of allLines.value.values()) {
+    if (it.color !== color || !colorOk(it)) continue;
+    const i = it.line.keys.indexOf(key);
+    if (i >= 0 && i < it.line.moves.length && !isUserPly(it, i)) out.add(it.line.moves[i].uci);
+  }
+  return [...out];
+}
+
 const boardGroups = computed(() => {
   const items = new Map<string, BoardItem>();
+  const mine = mineSearch.value;
   for (const h of moveHits.value)
     for (const p of h.occ) {
       const mv = h.item.line.moves;
-      const my = mv[p];
-      const id = h.item.line.keys[p] + '|' + (my?.uci ?? '') + '|' + h.item.color;
+      const key = h.item.line.keys[p];
+      // the move that names the group: yours just played (mine) or yours to play next
+      const gi = mine ? p - 1 : p;
+      const g = mv[gi];
+      const id = key + '|' + (mine ? '' : g?.uci ?? '') + '|' + h.item.color;
       const ex = items.get(id);
       if (ex) { ex.lines++; ex.off &&= isOff(h.item.line.id); continue; }
       items.set(id, {
-        id, key: h.item.line.keys[p], my: my?.uci, myLabel: my ? plyLabel(h.item.line.startFen, mv, p) : 'line ends',
-        last: mv[p - 1]?.uci, item: h.item, p, lines: 1, off: isOff(h.item.line.id),
+        id, key,
+        group: g ? g.san.replace(/[+#]/g, '') : '—',
+        label: g ? plyLabel(h.item.line.startFen, mv, gi) : 'line ends',
+        last: mv[p - 1]?.uci,
+        arrows: mine ? oppReplies(key, h.item.color) : g ? [g.uci] : [],
+        item: h.item, p, lines: 1, off: isOff(h.item.line.id),
       });
     }
   const groups = new Map<string, BoardItem[]>();
   for (const b of items.values()) {
-    const g = (b.my ? (mvSan(b) ?? '') : '—') + '|' + b.item.color;
+    const g = b.group + '|' + b.item.color;
     groups.get(g)?.push(b) ?? groups.set(g, [b]);
   }
   return [...groups.entries()]
     .map(([k, list]) => ({ key: k, san: k.split('|')[0], color: list[0].item.color, list }))
     .sort((a, b) => b.list.length - a.list.length || a.san.localeCompare(b.san));
 });
-function mvSan(b: BoardItem): string | undefined {
-  return b.item.line.moves[b.p]?.san.replace(/[+#]/g, '');
-}
 const boardCount = computed(() => boardGroups.value.reduce((a, g) => a + g.list.length, 0));
 const boardsShown = ref(40);
 const moveTrainable = computed(() =>
@@ -510,23 +541,68 @@ function train(list: { item: LibLine; ply: number }[], fromPly: boolean) {
   emit('train', list.map((h) => h.item.line.id), plies);
 }
 
-/** Remember the search (also used to come back here after a training session started from it). */
-function saveState() {
-  if (props.fromTraining) return; // exploring a line during training isn't "a search"
-  rememberSearch({
+function snapshot(): SavedSearch {
+  return {
     tab: tab.value, startFen: startFen.value, history: history.value.map((h) => ({ ...h })), cursor: cursor.value,
     orientation: orientation.value, query: query.value, moveQuery: moveQuery.value, moveBy: moveBy.value,
     pieceQuery: pieceQuery.value, resultView: resultView.value,
     fromHere: fromHere.value, fromFirst: fromFirst.value, scope: scope.value ? [...scope.value] : null,
-  });
+  };
 }
+
+/** The search in the page address (#search?…), so a refresh or a shared link reopens it. */
+function toAddress(m: SavedSearch): string {
+  const q = new URLSearchParams();
+  q.set('t', m.tab);
+  q.set('c', color.value);
+  if (m.startFen !== DEFAULT_FEN) q.set('f', m.startFen);
+  if (m.history.length) q.set('m', m.history.map((h) => h.uci).join('.'));
+  if (m.cursor !== m.history.length) q.set('k', String(m.cursor));
+  q.set('o', m.orientation === 'white' ? 'w' : 'b');
+  if (m.query) q.set('q', m.query);
+  if (m.moveQuery) q.set('mq', m.moveQuery);
+  if (m.moveBy !== 'me') q.set('by', m.moveBy);
+  if (m.pieceQuery) q.set('p', m.pieceQuery);
+  if (m.resultView === 'boards') q.set('v', 'boards');
+  if (!m.fromHere) q.set('fh', '0');
+  if (m.fromFirst) q.set('ff', '1');
+  if (m.scope) q.set('s', m.scope.join('.'));
+  return '#search?' + q.toString();
+}
+function fromAddress(): SavedSearch | null {
+  const h = location.hash;
+  if (!h.startsWith('#search?')) return null;
+  const q = new URLSearchParams(h.slice('#search?'.length));
+  const c = q.get('c');
+  if (c === 'all' || c === 'w' || c === 'b') color.value = c;
+  const moves = (q.get('m') ?? '').split('.').filter(Boolean).map((uci) => ({ uci, san: '' }));
+  return {
+    tab: q.get('t') === 'moves' ? 'moves' : 'board',
+    startFen: q.get('f') ?? DEFAULT_FEN,
+    history: moves,
+    cursor: q.has('k') ? Math.min(moves.length, +q.get('k')!) : moves.length,
+    orientation: q.get('o') === 'b' ? 'black' : 'white',
+    query: q.get('q') ?? '', moveQuery: q.get('mq') ?? '', moveBy: q.get('by') === 'opp' ? 'opp' : 'me',
+    pieceQuery: q.get('p') ?? '', resultView: q.get('v') === 'boards' ? 'boards' : 'lines',
+    fromHere: q.get('fh') !== '0', fromFirst: q.get('ff') === '1',
+    scope: q.get('s') ? q.get('s')!.split('.') : null,
+  };
+}
+
+/** Remember the search: in this device's memory and in the page address (replaced, not a new history entry). */
+function saveState() {
+  if (props.fromTraining) return; // exploring a line during training isn't "a search"
+  const m = snapshot();
+  rememberSearch(m);
+  if (location.hash.startsWith('#search')) history_.replaceState(history_.state, '', location.pathname + location.search + toAddress(m));
+}
+const history_ = window.history;
 let saveTimer = 0;
-watch([tab, history, cursor, orientation, query, moveQuery, moveBy, fromHere, fromFirst, scope, pieceQuery, resultView], () => {
+watch([tab, history, cursor, orientation, query, moveQuery, moveBy, fromHere, fromFirst, scope, pieceQuery, resultView, color], () => {
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(saveState, 300);
 }, { deep: true });
-function restoreState(): boolean {
-  const m = searchMemory.saved;
+function restoreState(m: SavedSearch | null | undefined = searchMemory.saved): boolean {
   if (!m) return false;
   tab.value = m.tab; query.value = m.query; moveQuery.value = m.moveQuery; moveBy.value = m.moveBy;
   pieceQuery.value = m.pieceQuery ?? ''; resultView.value = m.resultView ?? 'lines';
@@ -553,7 +629,8 @@ onMounted(() => {
     for (const u of props.init.moves) play(u, false);
     orientation.value = props.init.color ? (props.init.color === 'w' ? 'white' : 'black') : chess.turn() === 'w' ? 'white' : 'black';
     goTo(props.init.cursor ?? history.value.length);
-  } else if (props.fromTraining || !restoreState()) reset();
+  } else if (props.fromTraining || !(restoreState(fromAddress()) || restoreState())) reset();
+  if (!props.fromTraining) nextTick(saveState); // put the search in the address right away
 });
 </script>
 
@@ -578,6 +655,11 @@ onMounted(() => {
         <button :class="{ on: color === 'w' }" @click="color = 'w'">♔ White</button>
         <button :class="{ on: color === 'b' }" @click="color = 'b'">♚ Black</button>
       </div>
+    </div>
+
+    <div class="search-opts">
+      <label class="set hide-off">Hide disabled lines <input type="checkbox" v-model="state.settings.searchHideOff" /></label>
+      <label v-if="state.selection.length" class="set hide-off">Only selected lines ({{ state.selection.length }}) <input type="checkbox" v-model="state.settings.searchSelectedOnly" /></label>
     </div>
 
     <!-- ================= POSITION / EXPLORER ================= -->
@@ -746,13 +828,17 @@ onMounted(() => {
         <button class="btn wide" @click="exploreFound" :disabled="!foundActive">🔍 Explore these lines</button>
 
         <template v-if="resultView === 'boards'">
-          <p class="small muted">Each board is a position where it's your move: the last move is highlighted, the arrow is your move in your lines. Grouped by your move.</p>
+          <p class="small muted" v-if="mineSearch">Each board is the position after your move (highlighted); the arrows are the opponent replies your lines cover. Grouped by your move.</p>
+          <p class="small muted" v-else>Each board is a position where it's your move: the last move is highlighted, the arrow is your move in your lines. Grouped by your move.</p>
           <template v-for="g in boardGroups" :key="g.key">
             <h3 class="bgroup">{{ g.san }} <span class="muted small">· {{ g.list.length }} position{{ g.list.length === 1 ? '' : 's' }}{{ color === 'all' ? (g.color === 'w' ? ' · as White' : ' · as Black') : '' }}</span></h3>
             <div class="bgrid">
               <div v-for="b in g.list.slice(0, boardsShown)" :key="b.id" :class="['bcell', { off: b.off }]" @click="openLine(b.item, b.p)">
-                <MiniBoard :fen="b.key" :orientation="b.item.color === 'w' ? 'white' : 'black'" :last-move="b.last" :arrow="b.my" />
-                <div class="bcap small"><b>{{ b.myLabel }}</b> · {{ b.item.title }}<span v-if="b.lines > 1" class="muted"> +{{ b.lines - 1 }}</span></div>
+                <MiniBoard :fen="b.key" :orientation="b.item.color === 'w' ? 'white' : 'black'" :last-move="b.last" :arrows="b.arrows" :arrow-color="mineSearch ? '#1f4fb0' : '#15781b'" />
+                <div class="bcap small">
+                  <b>{{ b.label }}</b> · {{ b.item.title }}<span v-if="b.lines > 1" class="muted"> +{{ b.lines - 1 }}</span>
+                  <span v-if="mineSearch" class="muted"> · {{ b.arrows.length || 'no' }} repl{{ b.arrows.length === 1 ? 'y' : 'ies' }}</span>
+                </div>
               </div>
             </div>
           </template>

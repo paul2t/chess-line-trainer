@@ -10,7 +10,8 @@ const props = defineProps<{
   fen: string;
   orientation: 'white' | 'black';
   lastMove?: string | null; // uci
-  arrow?: string | null; // uci
+  arrows?: string[]; // uci
+  arrowColor?: string;
 }>();
 
 const boardImg = computed(() => (BOARDS.find((b) => b.id === state.settings.theme) ?? BOARDS[0]).img);
@@ -39,27 +40,30 @@ const placed = computed(() => {
 });
 
 const hl = computed(() => (props.lastMove ? [props.lastMove.slice(0, 2), props.lastMove.slice(2, 4)].map(xy) : []));
-const arr = computed(() => {
-  if (!props.arrow) return null;
-  const [x1, y1] = xy(props.arrow.slice(0, 2));
-  const [x2, y2] = xy(props.arrow.slice(2, 4));
-  // stop the line a bit before the target centre so the head sits on the square
-  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
-  return { x1: x1 + 0.5, y1: y1 + 0.5, x2: x2 + 0.5 - (dx / len) * 0.25, y2: y2 + 0.5 - (dy / len) * 0.25 };
-});
+const color = computed(() => props.arrowColor ?? '#15781b');
+const mid = `mah${Math.random().toString(36).slice(2, 8)}`; // unique marker id per board
+const arrs = computed(() =>
+  (props.arrows ?? []).map((u) => {
+    const [x1, y1] = xy(u.slice(0, 2));
+    const [x2, y2] = xy(u.slice(2, 4));
+    // stop the line a bit before the target centre so the head sits on the square
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+    return { u, x1: x1 + 0.5, y1: y1 + 0.5, x2: x2 + 0.5 - (dx / len) * 0.25, y2: y2 + 0.5 - (dy / len) * 0.25 };
+  }),
+);
 </script>
 
 <template>
   <div class="mini" :style="{ backgroundImage: `url(${boardImg})` }">
     <div v-for="(p, i) in hl" :key="'h' + i" class="mini-hl" :style="{ left: p[0] * 12.5 + '%', top: p[1] * 12.5 + '%' }"></div>
     <div v-for="p in placed" :key="p.key" class="mini-pc" :style="{ left: p.x * 12.5 + '%', top: p.y * 12.5 + '%', backgroundImage: `url(${p.img})` }"></div>
-    <svg v-if="arr" class="mini-arrow" viewBox="0 0 8 8">
+    <svg v-if="arrs.length" class="mini-arrow" viewBox="0 0 8 8">
       <defs>
-        <marker id="mah" markerWidth="4" markerHeight="4" refX="2.05" refY="2" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 V4 L3,2 Z" fill="#15781b" />
+        <marker :id="mid" markerWidth="4" markerHeight="4" refX="2.05" refY="2" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 V4 L3,2 Z" :fill="color" />
         </marker>
       </defs>
-      <line :x1="arr.x1" :y1="arr.y1" :x2="arr.x2" :y2="arr.y2" stroke="#15781b" stroke-width="0.17" stroke-linecap="round" marker-end="url(#mah)" opacity="0.85" />
+      <line v-for="a in arrs" :key="a.u" :x1="a.x1" :y1="a.y1" :x2="a.x2" :y2="a.y2" :stroke="color" stroke-width="0.17" stroke-linecap="round" :marker-end="`url(#${mid})`" opacity="0.85" />
     </svg>
   </div>
 </template>

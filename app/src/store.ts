@@ -80,6 +80,10 @@ export interface Settings {
   missingThreshold: number;
   /** Side tab shown in the library. */
   libraryTab: Color;
+  /** Find & explore: leave switched-off lines out of the results. */
+  searchHideOff: boolean;
+  /** Find & explore: only look at the lines selected in the library (when there is a selection). */
+  searchSelectedOnly: boolean;
 }
 
 
@@ -197,7 +201,7 @@ export function normalizeChapters(chs: Chapter[]): boolean {
 export const state = reactive({
   chapters: initialChapters(),
   stats: load<Record<string, LineStat>>(K_STATS, {}),
-  settings: { sessionSize: 10, autoNext: true, repeatFailed: true, opponentDelay: 450, theme: 'blue3', pieceSet: 'cburnett', sound: true, volume: 0.7, searchColor: 'all', lichessRatings: ['400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500'], lichessSpeeds: ['blitz', 'rapid', 'classical'], missingThreshold: 10, libraryTab: 'w', ...load<Partial<Settings>>(K_SETTINGS, {}) } as Settings,
+  settings: { sessionSize: 10, autoNext: true, repeatFailed: true, opponentDelay: 450, theme: 'blue3', pieceSet: 'cburnett', sound: true, volume: 0.7, searchColor: 'all', lichessRatings: ['400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500'], lichessSpeeds: ['blitz', 'rapid', 'classical'], missingThreshold: 10, libraryTab: 'w', searchHideOff: false, searchSelectedOnly: true, ...load<Partial<Settings>>(K_SETTINGS, {}) } as Settings,
   selection: load<string[]>(K_SEL, []),
   /** Lines excluded from training (line id → true). */
   disabled: load<Record<string, true>>(K_DIS, {}),

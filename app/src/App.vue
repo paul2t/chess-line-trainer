@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import Library from './Library.vue';
 import Trainer from './Trainer.vue';
 import PositionSearch from './PositionSearch.vue';
@@ -13,7 +13,20 @@ import { BOARDS } from './assets/boards';
 import { PIECE_SETS } from './assets/pieces';
 
 type View = 'library' | 'train' | 'summary' | 'settings' | 'search';
-const view = ref<View>('library');
+/* ---------- pages ↔ browser history ----------
+ * Each page has an address (#settings, #search…, #train, #summary; the library has none) and a history
+ * entry, so Back returns to the previous page and a refresh stays on the same page. The search screen
+ * keeps its own state in the address with replaceState (no extra history entries). A training session
+ * lives in memory only: after a refresh, #train/#summary fall back to the library.
+ */
+const PAGES: View[] = ['settings', 'search', 'train', 'summary'];
+function hashView(): View {
+  const h = location.hash.slice(1).split('?')[0] as View;
+  return PAGES.includes(h) ? h : 'library';
+}
+const startView = hashView() === 'train' || hashView() === 'summary' ? 'library' : hashView();
+if (startView !== hashView()) history.replaceState(null, '', location.pathname + location.search);
+const view = ref<View>(startView);
 const lib = ref<InstanceType<typeof Library> | null>(null);
 
 const MODE_LABEL: Record<Mode, string> = { smart: 'Smart review', today: "Today's mistakes", all: 'In order', random: 'Shuffle', position: 'Position' };
@@ -141,8 +154,8 @@ function quit() {
 
 /** Leave the summary: back to the screen the session was started from. */
 function endSession() {
-  if (session.origin === 'search') openSearch();
-  else backToLibrary();
+  session.active = false;
+  goBack(() => (session.origin === 'search' ? openSearch() : backToLibrary()));
 }
 
 type SearchInit = { fen: string; moves: string[]; cursor?: number; color?: 'w' | 'b' };
@@ -155,11 +168,44 @@ function openSearch(init?: SearchInit, fromTraining = false) {
   window.scrollTo(0, 0);
 }
 function closeSearch() {
-  if (searchFromTraining.value && session.active) {
-    view.value = 'train';
-    nextTick(() => trainer.value?.redraw());
-  } else backToLibrary();
+  goBack(() => {
+    if (searchFromTraining.value && session.active) {
+      view.value = 'train';
+      nextTick(() => trainer.value?.redraw());
+    } else backToLibrary();
+  });
 }
+
+let popping = false;
+const urlOf = (v: View) => location.pathname + location.search + (v === 'library' ? '' : '#' + v);
+watch(view, (v, old) => {
+  if (popping) { popping = false; return; }
+  // The summary replaces the training entry: Back from the summary goes to where training started.
+  if ((old === 'train' && v === 'summary') || (old === 'summary' && v === 'train')) history.replaceState({ v, pushed: history.state?.pushed }, '', urlOf(v));
+  else history.pushState({ v, pushed: true }, '', urlOf(v));
+});
+/** In-app "back" buttons: real browser Back when this page was opened from another one, else go there. */
+function goBack(fallback: () => void) {
+  if (history.state?.pushed) history.back();
+  else fallback();
+}
+window.addEventListener('popstate', () => {
+  let v = hashView();
+  if (v === 'train' && !session.active) v = session.results.length ? 'summary' : 'library';
+  if (v === 'summary' && !session.results.length) v = 'library';
+  if (v === 'search' && !(view.value === 'train' && session.active)) {
+    // a search page from the history: restored from its address
+    searchInit.value = undefined;
+    searchFromTraining.value = false;
+  }
+  if (view.value === 'train' && v !== 'train' && v !== 'search') session.active = false; // left the session
+  if (v !== hashView()) history.replaceState(history.state, '', urlOf(v)); // e.g. #train after the session ended
+  if (v === view.value) return;
+  popping = true;
+  view.value = v;
+  if (v === 'train') nextTick(() => trainer.value?.redraw());
+  if (v === 'library') window.setTimeout(() => lib.value?.refresh());
+});
 
 function backToLibrary() {
   session.active = false;
@@ -261,7 +307,7 @@ const storageKb = computed(() => {
     <header v-if="view !== 'train' && view !== 'search'" class="top">
       <h1 @click="backToLibrary">♞ Line Trainer</h1>
       <span v-if="cloudLabel" :class="['cloud', 'c-' + cloud.status]" :title="cloud.message">{{ cloudLabel }}</span>
-      <button class="icon" @click="view = view === 'settings' ? 'library' : 'settings'" aria-label="Settings">{{ view === 'settings' ? '✕' : '⚙' }}</button>
+      <button class="icon" @click="view === 'settings' ? goBack(backToLibrary) : (view = 'settings')" aria-label="Settings">{{ view === 'settings' ? '✕' : '⚙' }}</button>
     </header>
 
     <div v-if="storageError" class="warn banner">{{ storageError }}</div>
