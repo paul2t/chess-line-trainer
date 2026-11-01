@@ -665,7 +665,7 @@ onMounted(() => {
     <!-- ================= POSITION / EXPLORER ================= -->
     <template v-if="tab === 'board'">
       <div class="pinput">
-        <input class="inp" v-model="query" placeholder="Paste a FEN or moves (1.e4 c5 2.Nf3…)" @keydown.enter="applyQuery" />
+        <input class="inp" v-model="query" placeholder="Paste a FEN or moves (1.e4 c5 2.Nf3…)" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" @keydown.enter="applyQuery" />
         <button class="btn sm primary" @click="applyQuery">Go</button>
       </div>
 
@@ -792,7 +792,7 @@ onMounted(() => {
     <!-- ================= MOVES SEARCH ================= -->
     <template v-if="tab === 'moves'">
       <section class="card">
-        <input class="inp" v-model="moveQuery" placeholder="Moves, e.g. g5   or   Nf3 g6   or   O-O-O" autocapitalize="off" autocomplete="off" />
+        <input class="inp" v-model="moveQuery" placeholder="Moves, e.g. g5   or   Nf3 g6   or   O-O-O" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" />
         <div class="colorpick">
           Played by
           <div class="seg">
@@ -802,7 +802,7 @@ onMounted(() => {
         </div>
         <p class="small muted" v-if="moveTerms.length > 1">Lines containing all of: {{ moveTerms.join(', ') }}</p>
         <label class="pick-label">Pieces on the board <span class="muted">(optional)</span></label>
-        <input class="inp" v-model="pieceQuery" placeholder="e.g. BBg4 WBe3 Nf3   or a FEN pattern" autocapitalize="off" autocomplete="off" />
+        <input class="inp" v-model="pieceQuery" placeholder="e.g. BBg4 WBe3 Nf3   or a FEN pattern" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" />
         <p class="small muted">
           <b>BBg4</b> black bishop on g4 · <b>WBe3</b> white bishop · <b>Nf3</b> knight of either colour · <b>e4</b>/<b>We4</b>/<b>BPe5</b> pawns.
           Or paste a FEN: its pieces must be there, its empty squares can hold anything.
