@@ -28,6 +28,9 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.fill('.psearch .card .inp >> nth=0', '');
   await page.fill('.psearch .card .inp >> nth=1', '8/8/8/2p1P3/3P4/8/8/8'); await page.waitForTimeout(200);
   console.log('FEN pattern:', await summary(), '|', await page.locator('.psearch .card p.small').first().innerText().then((t) => t.slice(-14)));
+  // empty squares
+  for (const q of ['BBg4', 'BBg4 -e2', 'BBg4 xe2', 'BBg4 Be2', '8/8/8/2x1P3/3P4/8/8/8', '8/8/8/4P3/3P4/8/8/8'])
+    { await page.fill('.psearch .card .inp >> nth=1', q); await page.waitForTimeout(200); console.log('  ', q.padEnd(24), await summary(), '| warn:', await page.locator('.psearch .warn').count()); }
   // bad token
   await page.fill('.psearch .card .inp >> nth=1', 'BBg4 Xz9'); await page.waitForTimeout(200);
   console.log('bad token note:', await page.locator('.psearch .warn').innerText());

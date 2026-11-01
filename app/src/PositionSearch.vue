@@ -348,24 +348,30 @@ const normSan = (s: string) => s.replace(/[+#!?]/g, '').replace(/0/g, 'O');
 
 /* ---------- piece filters ---------- */
 const pieceQuery = ref('');
-type PieceCond = { color?: Color; piece: string; sq: number }; // sq: 0 = a8 … 63 = h1
+type PieceCond = { color?: Color; piece: string; sq: number }; // sq: 0 = a8 … 63 = h1; piece '' = empty square
 type PieceFilter = { kind: 'pieces'; conds: PieceCond[]; bad: string[] } | { kind: 'fen'; cells: string[] } | null;
 const sqIndex = (s: string) => (8 - +s[1]) * 8 + (s.charCodeAt(0) - 97);
 
-/** "BBg4 WBe3 Nf3 e4 We4 BPe5" (colour optional, pawn letter optional) or a pattern FEN. */
+/**
+ * "BBg4 WBe3 Nf3 e4 We4 BPe5" (colour optional, pawn letter optional), "-d5"/"xd5" = empty square,
+ * or a pattern FEN (digits = any squares, x = an empty square).
+ */
 const pieceFilter = computed<PieceFilter>(() => {
   const q = pieceQuery.value.trim();
   if (!q) return null;
   const placement = q.split(/\s+/)[0];
-  if (/^[pnbrqkPNBRQK1-8]+(\/[pnbrqkPNBRQK1-8]+){7}$/.test(placement)) {
+  if (/^[pnbrqkPNBRQKxX1-8]+(\/[pnbrqkPNBRQKxX1-8]+){7}$/.test(placement)) {
     const cells: string[] = [];
-    for (const row of placement.split('/')) for (const ch of row) /\d/.test(ch) ? cells.push(...Array(+ch).fill('')) : cells.push(ch);
+    for (const row of placement.split('/'))
+      for (const ch of row) /\d/.test(ch) ? cells.push(...Array(+ch).fill('')) : cells.push(ch === 'x' || ch === 'X' ? '-' : ch);
     return cells.length === 64 ? { kind: 'fen', cells } : null;
   }
   const conds: PieceCond[] = [];
   const bad: string[] = [];
   for (const tok of q.split(/[\s,;]+/).filter(Boolean)) {
     // "Bg4" = bishop on g4 (B as a colour needs a piece letter after it: "BBg4", "BPe5")
+    const empty = tok.match(/^[-xX]([a-h][1-8])$/);
+    if (empty) { conds.push({ piece: '', sq: sqIndex(empty[1]) }); continue; }
     const m = tok.match(/^([WB])([KQRBNP])([a-h][1-8])$/) ?? tok.match(/^()([KQRBNP]?)([a-h][1-8])$/) ?? tok.match(/^(W)()([a-h][1-8])$/);
     if (!m) { bad.push(tok); continue; }
     conds.push({ color: m[1] === 'W' ? 'w' : m[1] === 'B' ? 'b' : undefined, piece: m[2] || 'P', sq: sqIndex(m[3]) });
@@ -387,9 +393,10 @@ function filterOk(key: string): boolean {
   const f = pieceFilter.value;
   if (!f) return true;
   const b = cellsOf(key);
-  if (f.kind === 'fen') return f.cells.every((c, i) => !c || b[i] === c);
+  if (f.kind === 'fen') return f.cells.every((c, i) => !c || (c === '-' ? !b[i] : b[i] === c));
   return f.conds.every((c) => {
     const x = b[c.sq];
+    if (!c.piece) return !x;
     if (!x || x.toUpperCase() !== c.piece) return false;
     return !c.color || (c.color === 'w') === (x === x.toUpperCase());
   });
@@ -802,10 +809,10 @@ onMounted(() => {
         </div>
         <p class="small muted" v-if="moveTerms.length > 1">Lines containing all of: {{ moveTerms.join(', ') }}</p>
         <label class="pick-label">Pieces on the board <span class="muted">(optional)</span></label>
-        <input class="inp" v-model="pieceQuery" placeholder="e.g. BBg4 WBe3 Nf3   or a FEN pattern" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" />
+        <input class="inp" v-model="pieceQuery" placeholder="e.g. BBg4 WBe3 Nf3 -d5   or a FEN pattern" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" />
         <p class="small muted">
-          <b>BBg4</b> black bishop on g4 · <b>WBe3</b> white bishop · <b>Nf3</b> knight of either colour · <b>e4</b>/<b>We4</b>/<b>BPe5</b> pawns.
-          Or paste a FEN: its pieces must be there, its empty squares can hold anything.
+          <b>BBg4</b> black bishop on g4 · <b>WBe3</b> white bishop · <b>Nf3</b> knight of either colour · <b>e4</b>/<b>We4</b>/<b>BPe5</b> pawns · <b>-d5</b> or <b>xd5</b> empty square.
+          Or paste a FEN: its pieces must be there, its empty squares can hold anything, an <b>x</b> must be empty.
           <span v-if="pieceFilter && pieceFilter.kind === 'pieces' && pieceFilter.bad.length" class="warn"> Not understood: {{ pieceFilter.bad.join(', ') }}</span>
           <span v-else-if="pieceFilter && pieceFilter.kind === 'fen'" class="gcount"> FEN pattern ✓</span>
         </p>
