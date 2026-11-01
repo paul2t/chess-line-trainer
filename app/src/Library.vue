@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue';
 import {
   state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setChapterDisabled, moveLine, moveChapter, createChapter, isOff,
-  priority, isToday, lineBadge, relDay, recentErrors, intervalDays, setDisabled, guessColor, conflicts, conflictPosition,
+  priority, resting, dueAt, isToday, lineBadge, relDay, recentErrors, intervalDays, setDisabled, guessColor, conflicts, conflictPosition,
   type Conflict, type LibChapter, type LibEntry, type Mode, type Chapter,
 } from './store';
 import { moveTokens, lichessUrl, lineToPgn, type Color } from './pgn';
@@ -66,13 +66,27 @@ const todayIds = computed(() => scopeIds.value.filter((id) => isToday(state.stat
 const todayUnfixed = computed(() => todayIds.value.filter((id) => !state.stats[id]?.lc).length);
 const smartCount = computed(() => Math.min(state.settings.sessionSize, Math.max(dueIds.value.length, 0)));
 
+/**
+ * Nothing due: the lines closest to due, skipping the ones you got right today.
+ * Once every line has been done today, a new round starts with the ones reviewed longest ago.
+ */
+function aheadIds(): string[] {
+  const t = now.value;
+  const lr = (id: string) => state.stats[id]?.lr ?? 0;
+  const ids = scopeIds.value;
+  const fresh = ids.filter((id) => !resting(state.stats[id], t)).sort((a, b) => dueAt(state.stats[a]) - dueAt(state.stats[b]) || lr(a) - lr(b));
+  const rested = ids.filter((id) => resting(state.stats[id], t)).sort((a, b) => lr(a) - lr(b));
+  return [...fresh, ...rested];
+}
+const restingCount = computed(() => scopeIds.value.filter((id) => resting(state.stats[id], now.value)).length);
+
 function startSmart() {
   let ids = dueIds.value.slice(0, state.settings.sessionSize);
   if (!ids.length) {
-    const t = now.value;
-    ids = [...scopeIds.value].sort((a, b) => smartPriority(b, t) - smartPriority(a, t)).slice(0, state.settings.sessionSize);
+    ids = aheadIds().slice(0, state.settings.sessionSize);
     if (!ids.length) return emit('toast', 'No lines to train. Add a PGN first.');
-    emit('toast', 'Nothing due — reviewing the lines closest to due.');
+    const allDone = ids.every((id) => resting(state.stats[id], now.value));
+    emit('toast', allDone ? 'Every line done today — starting a new round with the oldest.' : 'Nothing due — reviewing the lines closest to due.');
   }
   emit('start', 'smart', ids);
 }
@@ -350,7 +364,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       </div>
       <button class="btn primary big wide" @click="startSmart">
         Smart review <span class="pill">{{ smartCount }}</span>
-        <div class="btn-sub">{{ dueIds.length }} due · recent mistakes first{{ lichess.token ? ', then most played' : '' }}</div>
+        <div class="btn-sub">{{ dueIds.length }} due{{ restingCount ? ` · ${restingCount} done today` : '' }} · mistakes first{{ lichess.token ? ', then most played' : '' }}</div>
       </button>
       <button :class="['btn big wide', todayUnfixed ? 'danger' : '']" @click="startToday">
         Drill today's mistakes <span class="pill">{{ todayIds.length }}</span>

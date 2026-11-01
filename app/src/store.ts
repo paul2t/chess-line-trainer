@@ -468,24 +468,52 @@ export function intervalDays(st: LineStat | undefined): number {
   return st.s <= 0 ? 0 : Math.min(MAX_IV, Math.pow(2, st.s - 1));
 }
 
+/** Local midnight of the day of `t`. */
+export function dayStart(t: number): number {
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+function addDays(t: number, n: number): number {
+  const d = new Date(t);
+  d.setDate(d.getDate() + n);
+  return d.getTime();
+}
+
+/** Due from the start of the day `interval` days after the last review (so the time of day you train doesn't matter). */
 export function dueAt(st: LineStat | undefined): number {
-  if (!st) return 0;
-  return st.lr + intervalDays(st) * DAY;
+  if (!st || !st.a) return 0;
+  return addDays(dayStart(st.lr), intervalDays(st));
+}
+
+/** The last run of the line had a mistake (it stays due until you get it right). */
+export function lastMissed(st: LineStat | undefined): boolean {
+  if (!st || !st.a) return false;
+  const h = st.h;
+  return h && h.length ? h[h.length - 1] > 0 : !st.lc;
+}
+
+/** Got right today: rests until tomorrow (or until every other line has had its turn). */
+export function resting(st: LineStat | undefined, now = Date.now()): boolean {
+  return !!st && st.a > 0 && !lastMissed(st) && st.lr >= dayStart(now);
 }
 
 /**
- * Priority for the smart review. Higher = review sooner.
- * - recent mistakes dominate (×3, decaying with a one-week half-life)
- * - then how overdue the line is relative to its interval
+ * Priority for the smart review. Higher = review sooner; ≤ 0 = not due.
+ * - a line whose last run had a mistake is due right away, recent mistakes first
+ *   (×3, decaying with a one-week half-life)
+ * - a line you got right waits for its interval (at least until the next day),
+ *   then comes back sooner the more overdue it is and the more often you miss it
  * - never-seen lines get a flat 1
  */
 export function priority(st: LineStat | undefined, now = Date.now()): number {
   if (!st || st.a === 0) return 1;
-  const iv = intervalDays(st) * DAY;
-  const overdue = (now - st.lr - iv) / Math.max(iv, DAY);
-  const p = 3 * recentErrors(st, now) + Math.max(-1, Math.min(overdue, 5));
-  // Lines you often get wrong come first among the due ones.
-  return p > 0 ? p + 1.5 * recentErrorRate(st) : p;
+  const rate = recentErrorRate(st);
+  if (lastMissed(st)) return 1 + 3 * recentErrors(st, now) + 1.5 * rate;
+  const due = Math.max(dueAt(st), addDays(dayStart(st.lr), 1)); // never again the same day
+  const overdue = (now - due) / (Math.max(1, intervalDays(st)) * DAY);
+  if (now < due) return Math.max(-1, overdue);
+  return 0.1 + Math.min(overdue, 5) + recentErrors(st, now) + 1.5 * rate;
 }
 
 export function isToday(t: number, now = Date.now()): boolean {
