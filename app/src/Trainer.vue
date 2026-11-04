@@ -5,7 +5,8 @@ import type { Key } from 'chessground/types';
 import type { DrawShape } from 'chessground/draw';
 import Board from './Board.vue';
 import { moveNumberPrefix, lichessUrl, DEFAULT_FEN } from './pgn';
-import { userMovesAt, type LibLine } from './store';
+import { userMovesAt, state, type LibLine } from './store';
+import CommentBox from './CommentBox.vue';
 import { playSound } from './sound';
 
 const props = withDefaults(
@@ -289,7 +290,6 @@ onBeforeUnmount(() => clearTimeout(timer));
     <div :class="['board-box', { shake }]"><Board ref="board" /></div>
 
     <div :class="['status', 's-' + status.kind]">{{ status.text }}</div>
-    <div v-for="(c, i) in comments" :key="i" class="comment">💬 <b>{{ c.label }}</b> {{ c.text }}</div>
 
     <div class="tbtns" v-if="!finished">
       <button class="btn" @click="hint">Hint</button>
@@ -317,5 +317,14 @@ onBeforeUnmount(() => clearTimeout(timer));
         <span v-for="m in movesUpTo(moves.length)" :key="m.i" :class="['mv', { err: m.err }]">{{ m.label }}</span>
       </template>
     </div>
+
+    <template v-if="comments.length || state.settings.showComments">
+      <button class="btn sm comments-toggle" @click="state.settings.showComments = !state.settings.showComments">
+        💬 {{ state.settings.showComments ? 'Hide comments' : `Show comments (${comments.length})` }}
+      </button>
+      <template v-if="state.settings.showComments">
+        <CommentBox v-for="c in comments" :key="c.label + c.text" :label="c.label" :text="c.text" />
+      </template>
+    </template>
   </div>
 </template>

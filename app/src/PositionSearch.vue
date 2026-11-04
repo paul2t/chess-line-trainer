@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CommentBox from './CommentBox.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Chess, type Square } from 'chess.js';
 import type { Key } from 'chessground/types';
@@ -754,7 +755,6 @@ onMounted(() => {
         <a class="btn sm" :href="lichess" target="_blank" rel="noopener">lichess ↗</a>
       </div>
 
-      <div v-for="c in hereComments" :key="c" class="comment xcomment">💬 <b>{{ crumbs[cursor - 1] }}</b> {{ c }}</div>
       <div v-if="disagreement.length" class="warn small dis">⚠ Your active lines play different moves here: {{ disagreement.join(' / ') }}</div>
 
       <div v-if="here" class="lichess-here small muted">♟ {{ fmtGames(here.n) }} lichess games reached this position</div>
@@ -790,6 +790,7 @@ onMounted(() => {
         </div>
       </section>
       <p v-else class="muted small center">No {{ color === 'all' ? '' : color === 'w' ? 'White ' : 'Black ' }}line continues from this position.</p>
+      <CommentBox v-for="c in hereComments" :key="cursor + c" class="xcomment" :label="crumbs[cursor - 1]" :text="c" />
 
       <section class="card">
         <div class="presult">

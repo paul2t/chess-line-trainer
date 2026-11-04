@@ -311,3 +311,7 @@ select.inp { appearance: auto; }
 .sidepick { flex: none; }
 .sidepick button { min-width: 38px; font-size: 18px; padding: 3px 6px; }
 .study-access { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+.comments-toggle { margin: 8px 0 4px; }
+.comment.long { cursor: pointer; position: relative; }
+.comment .ctext.clamp { display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.comment .more { display: block; color: var(--accent2); font-size: 12.5px; margin-top: 4px; }
