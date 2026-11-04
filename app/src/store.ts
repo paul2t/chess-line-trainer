@@ -446,7 +446,14 @@ export function importPgn(text: string, target: ImportTarget): { chapter: Chapte
     if (!used.includes(ch)) used.push(ch);
     const have = new Set(ch.lines.map((l) => l.id));
     for (const p of g.parts) {
-      if (have.has(p.line.id)) { skipped++; continue; }
+      if (have.has(p.line.id)) {
+        // Already there: take the file's comments (e.g. re-importing an annotated version).
+        const ex = ch.lines.find((l) => l.id === p.line.id)!;
+        const inc = storeLine(p.line, p.title).comments;
+        if (inc && JSON.stringify(inc) !== JSON.stringify(ex.comments ?? {})) ex.comments = inc;
+        skipped++;
+        continue;
+      }
       have.add(p.line.id);
       ch.lines.push(storeLine(p.line, p.title));
       added++;

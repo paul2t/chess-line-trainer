@@ -4,6 +4,8 @@ export interface SavedSearch {
   orientation: 'white' | 'black'; query: string; moveQuery: string; moveBy: 'me' | 'opp';
   fromHere: boolean; fromFirst: boolean; scope: string[] | null;
   pieceQuery?: string; resultView?: 'lines' | 'boards';
+  /** Line being explored ("Explore this line"): always shown, whatever the filters. */
+  focus?: string[];
 }
 
 const KEY = 'clt.search.v1';

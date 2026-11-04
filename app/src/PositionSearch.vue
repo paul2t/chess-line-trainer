@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Chess, type Square } from 'chess.js';
 import type { Key } from 'chessground/types';
 import Board from './Board.vue';
@@ -10,7 +10,7 @@ import { playSound } from './sound';
 import { searchMemory, rememberSearch, type SavedSearch } from './searchMemory';
 import { explorer as lichessData, moveGames, fmtGames, lichess as lichessState } from './lichess';
 
-const props = defineProps<{ init?: { fen: string; moves: string[]; cursor?: number; color?: Color }; fromTraining?: boolean; restore?: boolean }>();
+const props = defineProps<{ init?: { fen: string; moves: string[]; cursor?: number; color?: Color; focus?: string[] }; fromTraining?: boolean; restore?: boolean }>();
 const emit = defineEmits<{
   (e: 'train', ids: string[], startPlies: Record<string, number>): void;
   (e: 'close'): void;
@@ -25,10 +25,15 @@ const color = computed<'all' | Color>({
 /** Lines the search looks at: the colour filter, the selection (if asked) and switched-off lines unless shown. */
 const selectedSet = computed(() => new Set(state.selection));
 const onlySelected = computed(() => state.settings.searchSelectedOnly && state.selection.length > 0);
+/** Line(s) opened with "Explore this line": shown even when switched off or not selected. */
+const focus = ref<Set<string>>(new Set());
+const offHere = (id: string) => isOff(id) && !focus.value.has(id);
 const colorOk = (it: LibLine) =>
   (color.value === 'all' || it.color === color.value) &&
+  (focus.value.has(it.line.id) ||
   !(state.settings.searchHideOff && isOff(it.line.id)) &&
-  (!onlySelected.value || selectedSet.value.has(it.line.id));
+  (!onlySelected.value || selectedSet.value.has(it.line.id)));
+const focusTitle = computed(() => [...focus.value].map((id) => allLines.value.get(id)?.title).filter(Boolean).join(', '));
 
 /* ================= board / position ================= */
 
@@ -224,7 +229,7 @@ const replyLabel = (san: string) => (sideToMove.value === 'w' ? san : `${moveNum
 const explorer = computed<Group[]>(() => {
   const groups: Group[] = [];
   for (const c of ['w', 'b'] as Color[]) {
-    const hs = hits.value.filter((h) => h.item.color === c && !isOff(h.item.line.id));
+    const hs = hits.value.filter((h) => h.item.color === c && !offHere(h.item.line.id));
     if (!hs.length) continue;
     const rows = new Map<string, Row>();
     for (const h of hs) {
@@ -303,7 +308,7 @@ const branchMaps = computed(() => {
   const theirs = new Map<string, Set<string>>();
   const mine = new Map<string, Set<string>>();
   for (const it of allLines.value.values()) {
-    if (isOff(it.line.id) || !colorOk(it)) continue;
+    if (offHere(it.line.id) || !colorOk(it)) continue;
     if (scope.value && !scope.value.has(it.line.id)) continue;
     const mv = it.line.moves;
     for (let i = 0; i < mv.length; i++) {
@@ -554,6 +559,7 @@ function snapshot(): SavedSearch {
     orientation: orientation.value, query: query.value, moveQuery: moveQuery.value, moveBy: moveBy.value,
     pieceQuery: pieceQuery.value, resultView: resultView.value,
     fromHere: fromHere.value, fromFirst: fromFirst.value, scope: scope.value ? [...scope.value] : null,
+    focus: focus.value.size ? [...focus.value] : undefined,
   };
 }
 
@@ -574,6 +580,7 @@ function toAddress(m: SavedSearch): string {
   if (!m.fromHere) q.set('fh', '0');
   if (m.fromFirst) q.set('ff', '1');
   if (m.scope) q.set('s', m.scope.join('.'));
+  if (m.focus?.length) q.set('fl', m.focus.join('.'));
   return '#search?' + q.toString();
 }
 function fromAddress(): SavedSearch | null {
@@ -593,6 +600,7 @@ function fromAddress(): SavedSearch | null {
     pieceQuery: q.get('p') ?? '', resultView: q.get('v') === 'boards' ? 'boards' : 'lines',
     fromHere: q.get('fh') !== '0', fromFirst: q.get('ff') === '1',
     scope: q.get('s') ? q.get('s')!.split('.') : null,
+    focus: q.get('fl') ? q.get('fl')!.split('.') : undefined,
   };
 }
 
@@ -605,7 +613,7 @@ function saveState() {
 }
 const history_ = window.history;
 let saveTimer = 0;
-watch([tab, history, cursor, orientation, query, moveQuery, moveBy, fromHere, fromFirst, scope, pieceQuery, resultView, color], () => {
+watch([tab, history, cursor, orientation, query, moveQuery, moveBy, fromHere, fromFirst, scope, pieceQuery, resultView, color, focus], () => {
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(saveState, 300);
 }, { deep: true });
@@ -615,11 +623,45 @@ function restoreState(m: SavedSearch | null | undefined = searchMemory.saved): b
   pieceQuery.value = m.pieceQuery ?? ''; resultView.value = m.resultView ?? 'lines';
   fromHere.value = m.fromHere; fromFirst.value = m.fromFirst; orientation.value = m.orientation;
   scope.value = m.scope ? new Set(m.scope) : null;
+  focus.value = new Set(m.focus ?? []);
   load(m.startFen);
   for (const h of m.history) play(h.uci, false);
   goTo(m.cursor);
   return true;
 }
+/** Comments of the last move played (from the lines that play it here), the explored line's first. */
+const hereComments = computed<string[]>(() => {
+  if (!cursor.value) return [];
+  const prev = historyKeys.value[cursor.value - 1];
+  const uci = history.value[cursor.value - 1]?.uci;
+  const out: string[] = [];
+  const items = [...allLines.value.values()].filter(colorOk).sort((a, b) => Number(focus.value.has(b.line.id)) - Number(focus.value.has(a.line.id)));
+  for (const it of items) {
+    let i = it.line.keys.indexOf(prev);
+    while (i >= 0 && it.line.moves[i]?.uci !== uci) i = it.line.keys.indexOf(prev, i + 1);
+    const c = i >= 0 ? it.line.moves[i].comment : '';
+    if (c && !out.includes(c)) out.push(c);
+  }
+  return out;
+});
+
+/** Desktop: ← / → step through the moves, Home / End jump to the start / end. */
+function onKey(e: KeyboardEvent) {
+  if (e.altKey || e.ctrlKey || e.metaKey || tab.value !== 'board') return;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (document.querySelector('.modal-bg')) return;
+  const k = e.key;
+  if (k === 'ArrowLeft') back();
+  else if (k === 'ArrowRight') forward();
+  else if (k === 'Home') goTo(0);
+  else if (k === 'End') goTo(history.value.length);
+  else return;
+  e.preventDefault();
+}
+onMounted(() => window.addEventListener('keydown', onKey));
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
+
 const trainPosition = () => train(trainable.value, fromHere.value);
 const trainMoves = () => train(moveTrainable.value.map((h) => ({ item: h.item, ply: h.first })), fromFirst.value);
 
@@ -632,6 +674,8 @@ const shown = ref(60);
 onMounted(() => {
   if (props.init) {
     if (props.init.color) color.value = props.init.color;
+    focus.value = new Set(props.init.focus ?? []);
+    if (props.init.focus?.length) tab.value = 'board';
     load(props.init.fen);
     for (const u of props.init.moves) play(u, false);
     orientation.value = props.init.color ? (props.init.color === 'w' ? 'white' : 'black') : chess.turn() === 'w' ? 'white' : 'black';
@@ -676,6 +720,10 @@ onMounted(() => {
         <button class="btn sm primary" @click="applyQuery">Go</button>
       </div>
 
+      <div v-if="focus.size" class="scopebar focusbar">
+        <span>Exploring <b>{{ focusTitle }}</b><span class="muted" v-if="onlySelected"> · with your {{ state.selection.length }} selected lines</span></span>
+        <button class="btn sm" @click="focus = new Set()" aria-label="Stop exploring this line">✕</button>
+      </div>
       <div v-if="scope" class="scopebar">
         <span>Exploring <b>{{ scope.size }}</b> found line{{ scope.size === 1 ? '' : 's' }}</span>
         <button class="btn sm" @click="scope = null">Show all lines</button>
@@ -706,6 +754,7 @@ onMounted(() => {
         <a class="btn sm" :href="lichess" target="_blank" rel="noopener">lichess ↗</a>
       </div>
 
+      <div v-for="c in hereComments" :key="c" class="comment xcomment">💬 <b>{{ crumbs[cursor - 1] }}</b> {{ c }}</div>
       <div v-if="disagreement.length" class="warn small dis">⚠ Your active lines play different moves here: {{ disagreement.join(' / ') }}</div>
 
       <div v-if="here" class="lichess-here small muted">♟ {{ fmtGames(here.n) }} lichess games reached this position</div>

@@ -158,7 +158,7 @@ function endSession() {
   goBack(() => (session.origin === 'search' ? openSearch() : backToLibrary()));
 }
 
-type SearchInit = { fen: string; moves: string[]; cursor?: number; color?: 'w' | 'b' };
+type SearchInit = { fen: string; moves: string[]; cursor?: number; color?: 'w' | 'b'; focus?: string[] };
 const searchInit = ref<SearchInit | undefined>();
 const searchFromTraining = ref(false);
 function openSearch(init?: SearchInit, fromTraining = false) {

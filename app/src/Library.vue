@@ -17,7 +17,7 @@ import { lineGames, popularity, fmtGames, missingReplies, missingLabel, lichess 
 const emit = defineEmits<{
   (e: 'start', mode: Mode, ids: string[]): void;
   (e: 'toast', msg: string): void;
-  (e: 'search', init?: { fen: string; moves: string[]; color?: Color }): void;
+  (e: 'search', init?: { fen: string; moves: string[]; color?: Color; cursor?: number; focus?: string[] }): void;
 }>();
 
 const now = ref(Date.now());
@@ -505,6 +505,11 @@ async function moveToNew(c: LibChapter, e: LibEntry, color: Color) {
   if (!name) return;
   moveTo(c, e, createChapter(name, color).id);
 }
+/** Open the explorer at the start of the line, with the whole line ahead (→ steps through it). */
+function exploreLine(e: LibEntry) {
+  menu.value = null;
+  emit('search', { fen: e.line.startFen, moves: e.line.moves.map((m) => m.uci), cursor: 0, color: e.color, focus: [e.line.id] });
+}
 function copyLine(c: LibChapter, e: LibEntry) {
   menu.value = null;
   copyPgn(entriesPgn([{ e, chapter: c.chapter }]), 1);
@@ -746,6 +751,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         </template>
         <template v-else-if="menu.kind === 'line'">
           <h3>{{ menu.e.stored.title }}</h3>
+          <button class="btn wide" @click="exploreLine(menu.e)">🔍 Explore this line</button>
           <button class="btn wide" @click="renameLn(menu.c, menu.e)">✎ Rename</button>
           <button class="btn wide" @click="menu = { kind: 'move', c: menu.c, e: menu.e }">↪ Move to chapter…</button>
           <button class="btn wide" @click="copyLine(menu.c, menu.e)">⧉ Copy as PGN</button>

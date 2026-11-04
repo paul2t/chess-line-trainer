@@ -39,7 +39,13 @@ const errPlies = ref<number[]>([]);
 const mistake = computed(() => errPlies.value.length > 0);
 const finished = ref(false);
 const status = ref<Status>({ kind: 'opp', text: '' });
-const comment = ref('');
+/** Comments of the moves since your last move (yours, then the opponent's reply): one doesn't hide the other. */
+const comments = ref<{ label: string; text: string }[]>([]);
+function noteComment(p: number, reset: boolean) {
+  if (reset) comments.value = [];
+  const c = moves.value[p]?.comment;
+  if (c) comments.value.push({ label: plyLabel(p), text: c });
+}
 const shake = ref(false);
 let lastMove: Key[] | undefined;
 let timer = 0;
@@ -114,7 +120,8 @@ function start() {
   const skip = Math.min(props.startPly, moves.value.length);
   for (let i = 0; i < skip; i++) applyUci(moves.value[i].uci, false);
   ply.value = skip;
-  if (skip) comment.value = moves.value[skip - 1].comment;
+  comments.value = [];
+  if (skip) noteComment(skip - 1, true);
   board.value?.set({ orientation: colorName.value, fen: chess.fen(), lastMove });
   step(true);
 }
@@ -143,8 +150,8 @@ function applyUci(uci: string, sound = true) {
 function playOpponent() {
   const mv = moves.value[ply.value];
   applyUci(mv.uci);
+  noteComment(ply.value, false);
   ply.value++;
-  comment.value = mv.comment;
   if (status.value.kind !== 'ok') status.value = { kind: 'turn', text: 'Your move' };
   step();
 }
@@ -176,8 +183,8 @@ function onUserMove(orig: Key, dest: Key) {
   if (uci === exp.uci) {
     applyUci(uci);
     shapes([]);
+    noteComment(ply.value, true);
     ply.value++;
-    comment.value = exp.comment;
     status.value = { kind: 'ok', text: '✓ ' + exp.san };
     step();
     return;
@@ -282,7 +289,7 @@ onBeforeUnmount(() => clearTimeout(timer));
     <div :class="['board-box', { shake }]"><Board ref="board" /></div>
 
     <div :class="['status', 's-' + status.kind]">{{ status.text }}</div>
-    <div class="comment" v-if="comment">💬 {{ comment }}</div>
+    <div v-for="(c, i) in comments" :key="i" class="comment">💬 <b>{{ c.label }}</b> {{ c.text }}</div>
 
     <div class="tbtns" v-if="!finished">
       <button class="btn" @click="hint">Hint</button>

@@ -222,12 +222,15 @@ function parsePgnRaw(text: string): Game[] {
   let ended = false;
   let errors: string[] = [];
   let started = false;
+  /** Before the first move of the game / of a variation: comments wait for that move. */
+  let pre = true;
+  let preComment = '';
 
   const newRoot = (): PgnNode => ({ san: '', uci: '', fen: DEFAULT_FEN, key: posKey(DEFAULT_FEN), pos: Chess.default(), comment: '', children: [], parent: null });
   const finish = () => {
     if (started && root && root.children.length) games.push(buildGame(headers, root, games.length, errors));
     headers = {}; root = newRoot(); cur = root; stack = []; depth = 0; deadDepth = -1;
-    hasMoves = false; ended = false; errors = []; started = false;
+    hasMoves = false; ended = false; errors = []; started = false; pre = true; preComment = '';
   };
   finish();
 
@@ -249,8 +252,11 @@ function parsePgnRaw(text: string): Game[] {
     started = true;
     if (tok.t === 'comment') {
       if (deadDepth >= 0) continue;
-      const clean = tok.v.replace(/\[%[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
-      if (clean) cur!.comment = cur!.comment ? cur!.comment + ' ' + clean : clean;
+      const clean = cleanComment(tok.v);
+      if (!clean) continue;
+      // A comment before the first move of the game or of a variation goes with that move.
+      if (pre) preComment = preComment ? preComment + '\n\n' + clean : clean;
+      else cur!.comment = cur!.comment ? cur!.comment + '\n\n' + clean : clean;
       continue;
     }
     if (tok.t === 'open') {
@@ -258,6 +264,7 @@ function parsePgnRaw(text: string): Game[] {
       if (deadDepth >= 0) continue;
       stack.push(cur!);
       cur = cur!.parent ?? cur;
+      pre = true; preComment = '';
       continue;
     }
     if (tok.t === 'close') {
@@ -269,6 +276,7 @@ function parsePgnRaw(text: string): Game[] {
       }
       depth--;
       cur = stack.pop()!;
+      pre = false; preComment = '';
       continue;
     }
     // move
@@ -294,9 +302,21 @@ function parsePgnRaw(text: string): Game[] {
       cur!.children.push(child);
     }
     cur = child;
+    if (preComment) child.comment = child.comment ? preComment + '\n\n' + child.comment : preComment;
+    pre = false; preComment = '';
   }
   finish();
   return games;
+}
+
+/** Comment text: without lichess commands ([%cal …], [%clk …]), paragraphs kept, other whitespace collapsed. */
+export function cleanComment(raw: string): string {
+  return raw
+    .replace(/\[%[^\]]*\]/g, '')
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 /** Render moves as "1.e4 e5 2.Nf3" starting from a FEN. */
