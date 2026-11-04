@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
+import StudyImport from './StudyImport.vue';
+import { planBookSync, applySync, planSummary, planIsEmpty, checkStudies } from './study';
 import {
   state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setChapterDisabled, moveLine, moveChapter, createChapter, isOff,
+  createBook, renameBook, setBookDisabled, removeBook, moveBook, setChapterBook, bookChapters, chapterOff, type Book,
   priority, resting, dueAt, isToday, lineBadge, relDay, recentErrors, intervalDays, setDisabled, guessColor, conflicts, conflictPosition,
   type Conflict, type LibChapter, type LibEntry, type Mode, type Chapter,
 } from './store';
@@ -54,14 +57,15 @@ function smartPriority(id: string, t: number): number {
   return p + (it ? popularity(it) * (st?.a ? 1 : 1.5) : 0);
 }
 
-const dueIds = computed(() => {
+function dueFor(scope: string[]): string[] {
   const t = now.value;
-  return scopeIds.value
+  return scope
     .map((id, i) => ({ id, p: smartPriority(id, t), i }))
     .filter((x) => x.p > 0)
     .sort((a, b) => b.p - a.p || a.i - b.i)
     .map((x) => x.id);
-});
+}
+const dueIds = computed(() => dueFor(scopeIds.value));
 const todayIds = computed(() => scopeIds.value.filter((id) => isToday(state.stats[id]?.lm ?? 0, now.value)));
 const todayUnfixed = computed(() => todayIds.value.filter((id) => !state.stats[id]?.lc).length);
 const smartCount = computed(() => Math.min(state.settings.sessionSize, Math.max(dueIds.value.length, 0)));
@@ -70,20 +74,19 @@ const smartCount = computed(() => Math.min(state.settings.sessionSize, Math.max(
  * Nothing due: the lines closest to due, skipping the ones you got right today.
  * Once every line has been done today, a new round starts with the ones reviewed longest ago.
  */
-function aheadIds(): string[] {
+function aheadIds(ids: string[]): string[] {
   const t = now.value;
   const lr = (id: string) => state.stats[id]?.lr ?? 0;
-  const ids = scopeIds.value;
   const fresh = ids.filter((id) => !resting(state.stats[id], t)).sort((a, b) => dueAt(state.stats[a]) - dueAt(state.stats[b]) || lr(a) - lr(b));
   const rested = ids.filter((id) => resting(state.stats[id], t)).sort((a, b) => lr(a) - lr(b));
   return [...fresh, ...rested];
 }
 const restingCount = computed(() => scopeIds.value.filter((id) => resting(state.stats[id], now.value)).length);
 
-function startSmart() {
-  let ids = dueIds.value.slice(0, state.settings.sessionSize);
+function startSmart(scope: string[] = scopeIds.value) {
+  let ids = dueFor(scope).slice(0, state.settings.sessionSize);
   if (!ids.length) {
-    ids = aheadIds().slice(0, state.settings.sessionSize);
+    ids = aheadIds(scope).slice(0, state.settings.sessionSize);
     if (!ids.length) return emit('toast', 'No lines to train. Add a PGN first.');
     const allDone = ids.every((id) => resting(state.stats[id], now.value));
     emit('toast', allDone ? 'Every line done today — starting a new round with the oldest.' : 'Nothing due — reviewing the lines closest to due.');
@@ -216,14 +219,16 @@ function toggleGameEnabled(ids: string[]) {
 const fileInput = ref<HTMLInputElement | null>(null);
 const paste = reactive({ show: false, text: '' });
 /** PGNs waiting for the user to choose where they go: a new chapter (default) or an existing one. */
-interface Pending { name: string; text: string; color: Color | 'auto'; mixed: boolean; target: string /* 'new' or chapter id */; lines: number }
+interface Pending { name: string; text: string; color: Color | 'auto'; mixed: boolean; target: string /* 'new' or chapter id */; book: string; lines: number }
+/** Book chosen for the next PGN import (from a book's menu). */
+const importBook = ref('');
 const pending = ref<Pending[]>([]);
 
 /** New imports default to the side of the open tab ("Split by side" is offered for mixed files). */
 function pend(name: string, text: string): Pending {
   const g = guessColor(text);
   const lines = (text.match(/\[Event /g) ?? []).length;
-  return { name, text, color: state.settings.libraryTab, mixed: g.mixed, target: 'new', lines };
+  return { name, text, color: state.settings.libraryTab, mixed: g.mixed, target: 'new', book: importBook.value, lines };
 }
 async function onFiles(ev: Event) {
   const files = (ev.target as HTMLInputElement).files;
@@ -240,12 +245,14 @@ function pasteNext() {
 }
 function confirmImport() {
   const msgs = pending.value.map((p) => {
-    const r = importPgn(p.text, p.target === 'new' ? { kind: 'new', name: p.name.trim() || 'Chapter', color: p.color } : { kind: 'existing', chapterId: p.target });
+    const r = importPgn(p.text, p.target === 'new' ? { kind: 'new', name: p.name.trim() || 'Chapter', color: p.color, book: p.book || undefined } : { kind: 'existing', chapterId: p.target });
+    if (p.book) collapsed.delete(p.book);
     r.chapters.forEach((c) => open.add(c.id));
     state.settings.libraryTab = r.chapters[0].color;
     return `${r.chapters.map((c) => c.name).join(' + ')}: ${r.added} line(s) added${r.skipped ? `, ${r.skipped} already there` : ''}`;
   });
   pending.value = [];
+  importBook.value = '';
   now.value = Date.now();
   emit('toast', msgs.join('\n'));
 }
@@ -255,6 +262,7 @@ function setAllPending(c: Color | 'auto') {
 
 /* ---------- chapter & line actions ---------- */
 const reordering = ref(false);
+const sectionOrder = (s: Section) => s.chapters.map((c) => c.chapter);
 const tabChapters = computed(() => library.value.filter((c) => c.chapter.color === tab.value));
 const tabOrder = computed(() => state.chapters.filter((c) => c.color === tab.value));
 /** Move a chapter within its side group: swap with the neighbour (or go to the group's top). */
@@ -263,7 +271,132 @@ function shift(items: Chapter[], i: number, to: number) {
   if (!target) return;
   moveChapter(items[i].id, state.chapters.indexOf(target));
 }
-const menu = ref<null | { kind: 'chapter'; c: LibChapter } | { kind: 'line'; c: LibChapter; e: LibEntry } | { kind: 'move'; c: LibChapter; e: LibEntry }>(null);
+const menu = ref<
+  | null
+  | { kind: 'chapter'; c: LibChapter }
+  | { kind: 'line'; c: LibChapter; e: LibEntry }
+  | { kind: 'move'; c: LibChapter; e: LibEntry }
+  | { kind: 'chbook'; c: LibChapter }
+  | { kind: 'book'; s: Section }
+  | { kind: 'bookdel'; b: Book }
+  | { kind: 'add' }
+>(null);
+
+/* ---------- books ---------- */
+interface Section { book: Book | null; chapters: LibChapter[] }
+/** The open tab: each book with its chapters of this side, then the chapters without a book. */
+const sections = computed<Section[]>(() => {
+  const known = new Set(state.books.map((b) => b.id));
+  const out: Section[] = [];
+  for (const b of state.books) {
+    const chs = tabChapters.value.filter((c) => c.chapter.book === b.id);
+    const empty = !state.chapters.some((c) => c.book === b.id);
+    if (chs.length || (empty && (b.color ?? tab.value) === tab.value)) out.push({ book: b, chapters: chs });
+  }
+  const loose = tabChapters.value.filter((c) => !c.chapter.book || !known.has(c.chapter.book));
+  if (loose.length) out.push({ book: null, chapters: loose });
+  return out;
+});
+const sectionIds = (s: Section) => [...new Set(s.chapters.flatMap(chapterIds))];
+const sectionLines = (s: Section) => s.chapters.reduce((n, c) => n + c.lines.length, 0);
+const tabBooks = computed(() => sections.value.filter((s) => s.book).map((s) => s.book!));
+const collapsed = reactive(new Set<string>());
+const toggleBook = (id: string) => (collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id));
+const otherSideChapters = (s: Section) => (s.book ? bookChapters(s.book.id).length - s.chapters.length : 0);
+const showStudy = ref(false);
+const studyBook = ref<string | undefined>(undefined);
+const syncing = ref('');
+
+async function newBook() {
+  menu.value = null;
+  const name = await askText(`New ${sideName.value} book`, '', 'Create');
+  if (name) createBook(name, tab.value);
+}
+function smartBook(s: Section) {
+  menu.value = null;
+  const ids = enabledIds(sectionIds(s));
+  if (!ids.length) return emit('toast', s.book?.disabled ? 'This book is switched off.' : `No ${sideName.value} line to train in this book.`);
+  startSmart(ids);
+}
+function selectBook(s: Section) {
+  menu.value = null;
+  state.selection = [...state.selection.filter((id) => !onSide(id)), ...sectionIds(s)];
+  emit('toast', `Training scope: ${sectionIds(s).length} line(s) of “${s.book?.name}”`);
+}
+async function renameBk(b: Book) {
+  menu.value = null;
+  const n = await askText('Rename book', b.name);
+  if (n) renameBook(b, n);
+}
+function copyBook(s: Section) {
+  menu.value = null;
+  const list = s.chapters.flatMap((c) => c.lines.map((e) => ({ e, chapter: c.chapter })));
+  copyPgn(entriesPgn(list), list.length);
+}
+function importPgnInto(b: Book) {
+  menu.value = null;
+  importBook.value = b.id;
+  fileInput.value?.click();
+}
+function openStudy(b?: Book) {
+  menu.value = null;
+  studyBook.value = b?.id;
+  showStudy.value = true;
+}
+function studyDone(bookId: string, msg: string) {
+  showStudy.value = false;
+  collapsed.delete(bookId);
+  const chs = bookChapters(bookId);
+  const black = chs.filter((c) => c.color === 'b').length;
+  if (chs.length) state.settings.libraryTab = black > chs.length / 2 ? 'b' : black === chs.length / 2 ? tab.value : 'w';
+  now.value = Date.now();
+  emit('toast', msg);
+}
+async function deleteBook(b: Book, withChapters: boolean) {
+  menu.value = null;
+  const n = bookChapters(b.id).length;
+  if (withChapters && !(await askConfirm(`Delete “${b.name}” and its ${n} chapter${n === 1 ? '' : 's'}?`, 'Progress is kept in case you import the lines again.', 'Delete'))) return;
+  removeBook(b, withChapters);
+  state.selection = state.selection.filter((id) => allLines.value.has(id));
+}
+async function syncBook(b: Book) {
+  menu.value = null;
+  if (syncing.value) return;
+  syncing.value = b.id;
+  for (const st of [...(b.studies ?? [])]) {
+    try {
+      const plan = await planBookSync(b, st.id);
+      const msg = planSummary(plan);
+      if ((plan.gone.length || plan.removedLines) &&
+        !(await askConfirm(`Sync “${st.name}”?`, `${msg}. Unchanged lines keep their progress; lines you added here are kept.`, 'Sync'))) continue;
+      applySync(plan);
+      emit('toast', `${st.name}: ${planIsEmpty(plan) ? 'already up to date' : msg}`);
+    } catch (e) {
+      emit('toast', (e as Error).message);
+    }
+  }
+  syncing.value = '';
+  now.value = Date.now();
+}
+const booksExcept = (id?: string) => state.books.filter((x) => x.id !== id);
+const chaptersExcept = (id: string) => state.chapters.filter((x) => x.id !== id);
+const studyChanged = (b: Book) => (b.studies ?? []).some((s) => s.changed);
+function chapterToBook(c: LibChapter, bookId: string | undefined) {
+  menu.value = null;
+  setChapterBook(c.chapter, bookId);
+  if (bookId) collapsed.delete(bookId);
+  const b = state.books.find((x) => x.id === bookId);
+  emit('toast', b ? `“${c.chapter.name}” moved to “${b.name}”` : `“${c.chapter.name}” is no longer in a book`);
+}
+async function chapterToNewBook(c: LibChapter) {
+  const name = await askText('New book', '', 'Create');
+  if (name) chapterToBook(c, createBook(name, c.chapter.color).id);
+}
+function shiftBook(i: number, to: number) {
+  const target = tabBooks.value[to];
+  if (target) moveBook(tabBooks.value[i].id, state.books.indexOf(target));
+}
+onMounted(() => { if (state.books.some((b) => b.studies?.length)) checkStudies(); });
 async function delChapter(c: LibChapter) {
   menu.value = null;
   if (await askConfirm(`Delete chapter "${c.chapter.name}"?`, `Its ${c.lines.length} line(s) are removed. Progress is kept in case you import them again.`, 'Delete')) {
@@ -362,7 +495,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         <span v-if="sideSelection.length" class="muted"> · <a href="#" @click.prevent="clearSel">use all</a></span>
         <div v-if="otherSelected" class="small muted">{{ otherSelected }} selected line{{ otherSelected === 1 ? ' is' : 's are' }} on the {{ tab === 'w' ? 'Black' : 'White' }} tab</div>
       </div>
-      <button class="btn primary big wide" @click="startSmart">
+      <button class="btn primary big wide" @click="startSmart()">
         Smart review <span class="pill">{{ smartCount }}</span>
         <div class="btn-sub">{{ dueIds.length }} due{{ restingCount ? ` · ${restingCount} done today` : '' }} · mistakes first{{ lichess.token ? ', then most played' : '' }}</div>
       </button>
@@ -443,16 +576,15 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
     </div>
 
     <div class="lib-head">
-      <h2>{{ sideName }} chapters</h2>
+      <h2>{{ sideName }} repertoire</h2>
       <div v-if="reordering">
         <button class="btn sm primary" @click="reordering = false">Done</button>
       </div>
       <div v-else>
-        <button v-if="tabOrder.length > 1" class="btn sm" @click="reordering = true">⇅ Reorder</button>
-        <button class="btn sm" @click="paste.show = !paste.show">Paste</button>
-        <button class="btn sm primary" @click="fileInput?.click()">+ Import PGN</button>
-        <input ref="fileInput" type="file" multiple hidden @change="onFiles" />
+        <button v-if="tabOrder.length > 1 || tabBooks.length > 1" class="btn sm" @click="reordering = true">⇅ Reorder</button>
+        <button class="btn sm primary" @click="menu = { kind: 'add' }">+ Add</button>
       </div>
+      <input ref="fileInput" type="file" multiple hidden @change="onFiles" />
     </div>
 
     <section class="card" v-if="paste.show">
@@ -483,10 +615,14 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
           <label class="pick-label">Add to</label>
           <select class="inp" v-model="p.target">
             <option value="new">➕ New chapter</option>
-            <option v-for="c in state.chapters" :key="c.id" :value="c.id">{{ c.name }}</option>
+            <option v-for="c in state.chapters" :key="c.id" :value="c.id">{{ c.color === 'w' ? '♔' : '♚' }} {{ c.name }}</option>
           </select>
           <template v-if="p.target === 'new'">
             <input class="inp" v-model="p.name" placeholder="Chapter name" />
+            <select class="inp" v-model="p.book">
+              <option value="">No book</option>
+              <option v-for="b in state.books" :key="b.id" :value="b.id">📚 {{ b.name }}</option>
+            </select>
             <div class="seg">
               <button :class="{ on: p.color === 'w' }" @click="p.color = 'w'">♔ White</button>
               <button :class="{ on: p.color === 'b' }" @click="p.color = 'b'">♚ Black</button>
@@ -507,6 +643,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         <template v-if="menu.kind === 'chapter'">
           <h3>{{ menu.c.chapter.name }}</h3>
           <button class="btn wide" @click="renameCh(menu.c)">✎ Rename</button>
+          <button class="btn wide" @click="menu = { kind: 'chbook', c: menu.c }">📚 Move to book…</button>
           <button class="btn wide" @click="switchSide(menu.c)">{{ menu.c.chapter.color === 'w' ? '♚ Play Black in this chapter' : '♔ Play White in this chapter' }}</button>
           <button class="btn wide" @click="copyChapter(menu.c)">⧉ Copy as PGN</button>
           <button class="btn wide danger" @click="delChapter(menu.c)">🗑 Delete chapter</button>
@@ -518,9 +655,41 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
           <button class="btn wide" @click="copyLine(menu.c, menu.e)">⧉ Copy as PGN</button>
           <button class="btn wide danger" @click="delLine(menu.c, menu.e)">🗑 Delete line</button>
         </template>
+        <template v-else-if="menu.kind === 'chbook'">
+          <h3>Move “{{ menu.c.chapter.name }}” to</h3>
+          <button v-for="b in booksExcept(menu.c.chapter.book)" :key="b.id" class="btn wide" @click="chapterToBook(menu!.c, b.id)">📚 {{ b.name }}</button>
+          <button class="btn wide" @click="chapterToNewBook(menu.c)">➕ New book…</button>
+          <button v-if="menu.c.chapter.book" class="btn wide" @click="chapterToBook(menu.c, undefined)">No book</button>
+        </template>
+        <template v-else-if="menu.kind === 'book'">
+          <h3>📚 {{ menu.s.book!.name }}</h3>
+          <button class="btn wide" @click="smartBook(menu.s)">▶ Smart review this book</button>
+          <button class="btn wide" @click="selectBook(menu.s)">☑ Train only this book</button>
+          <button v-if="menu.s.book!.studies?.length" class="btn wide" @click="syncBook(menu.s.book!)">⟳ Sync with lichess ({{ menu.s.book!.studies.map((x) => x.name).join(', ') }})</button>
+          <button class="btn wide" @click="openStudy(menu.s.book!)">♞ Import a lichess study into it</button>
+          <button class="btn wide" @click="importPgnInto(menu.s.book!)">＋ Import PGN into it</button>
+          <button class="btn wide" @click="renameBk(menu.s.book!)">✎ Rename</button>
+          <button class="btn wide" @click="copyBook(menu.s)">⧉ Copy {{ sideName }} chapters as PGN</button>
+          <button class="btn wide danger" @click="menu = { kind: 'bookdel', b: menu.s.book! }">🗑 Delete book…</button>
+          <p v-for="st in menu.s.book!.studies ?? []" :key="st.id" class="small muted">
+            Linked to <a :href="`https://lichess.org/study/${st.id}`" target="_blank" rel="noopener">{{ st.name }} ↗</a> · synced {{ relDay(st.syncedAt, now) }}<span v-if="st.changed" class="t-due"> · changed on lichess</span>
+          </p>
+        </template>
+        <template v-else-if="menu.kind === 'bookdel'">
+          <h3>Delete “{{ menu.b.name }}”?</h3>
+          <button class="btn wide" @click="deleteBook(menu.b, false)">Delete the book, keep its chapters</button>
+          <button class="btn wide danger" @click="deleteBook(menu.b, true)">🗑 Delete the book and its {{ bookChapters(menu.b.id).length }} chapter(s)</button>
+        </template>
+        <template v-else-if="menu.kind === 'add'">
+          <h3>Add to your {{ sideName }} repertoire</h3>
+          <button class="btn wide" @click="menu = null; importBook = ''; fileInput?.click()">＋ Import PGN files</button>
+          <button class="btn wide" @click="menu = null; paste.show = true">📋 Paste PGN</button>
+          <button class="btn wide" @click="openStudy()">♞ Import a lichess study</button>
+          <button class="btn wide" @click="newBook">📚 New book</button>
+        </template>
         <template v-if="menu.kind === 'move'">
           <h3>Move “{{ menu.e.stored.title }}” to</h3>
-          <button v-for="ch in state.chapters.filter((x) => x.id !== menu!.c.chapter.id)" :key="ch.id" class="btn wide" @click="moveTo(menu!.c, menu!.e, ch.id)">
+          <button v-for="ch in chaptersExcept(menu.c.chapter.id)" :key="ch.id" class="btn wide" @click="moveTo(menu!.c, menu!.e, ch.id)">
             {{ ch.color === 'w' ? '♔' : '♚' }} {{ ch.name }}
           </button>
           <button class="btn wide" @click="moveToNew(menu.c, menu.e, 'w')">➕ New White chapter…</button>
@@ -530,28 +699,68 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       </div>
     </div>
 
-    <div v-if="!library.length" class="empty card">
+    <StudyImport v-if="showStudy" :book-id="studyBook" @close="showStudy = false" @done="studyDone" />
+
+    <div v-if="!library.length && !state.books.length" class="empty card">
       <p><b>No chapter yet.</b></p>
-      <p>Tap <b>+ Import PGN</b> to pick one or more .pgn files: each becomes a chapter, each game in it a line to train. You can also add lines from the explorer.</p>
+      <p>Tap <b>+ Add</b> to import .pgn files (each becomes a chapter, each game in it a line to train) or a lichess study. Group chapters into books, e.g. one book per opening. You can also add lines from the explorer.</p>
     </div>
 
-    <section v-if="reordering" class="card reorder">
-      <div v-for="(c, i) in tabOrder" :key="c.id" class="rrow">
-        <span class="rname">{{ c.name }} <span class="muted small">· {{ c.lines.length }}</span></span>
-        <button class="btn sm" :disabled="i === 0" @click="shift(tabOrder, i, 0)" aria-label="Move to top">⤒</button>
-        <button class="btn sm" :disabled="i === 0" @click="shift(tabOrder, i, i - 1)" aria-label="Move up">↑</button>
-        <button class="btn sm" :disabled="i === tabOrder.length - 1" @click="shift(tabOrder, i, i + 1)" aria-label="Move down">↓</button>
-      </div>
-    </section>
+    <template v-if="reordering">
+      <section v-for="s in sections" :key="s.book?.id ?? '-'" class="card reorder">
+        <div v-if="s.book" class="rrow rbook">
+          <span class="rname">📚 <b>{{ s.book.name }}</b></span>
+          <template v-for="bi in [tabBooks.indexOf(s.book)]" :key="0">
+            <button class="btn sm" :disabled="bi === 0" @click="shiftBook(bi, 0)" aria-label="Move book to top">⤒</button>
+            <button class="btn sm" :disabled="bi === 0" @click="shiftBook(bi, bi - 1)" aria-label="Move book up">↑</button>
+            <button class="btn sm" :disabled="bi === tabBooks.length - 1" @click="shiftBook(bi, bi + 1)" aria-label="Move book down">↓</button>
+          </template>
+        </div>
+        <div v-else class="rrow rbook"><span class="rname muted">Chapters without a book</span></div>
+        <div v-for="(c, i) in sectionOrder(s)" :key="c.id" class="rrow rchap">
+          <span class="rname">{{ c.name }} <span class="muted small">· {{ c.lines.length }}</span></span>
+          <button class="btn sm" :disabled="i === 0" @click="shift(sectionOrder(s), i, 0)" aria-label="Move to top">⤒</button>
+          <button class="btn sm" :disabled="i === 0" @click="shift(sectionOrder(s), i, i - 1)" aria-label="Move up">↑</button>
+          <button class="btn sm" :disabled="i === s.chapters.length - 1" @click="shift(sectionOrder(s), i, i + 1)" aria-label="Move down">↓</button>
+        </div>
+        <p v-if="!s.chapters.length" class="small muted">No {{ sideName }} chapter in this book.</p>
+      </section>
+    </template>
 
-    <p v-if="!reordering && state.chapters.length && !tabChapters.length" class="small muted center">No {{ sideName }} chapter yet — import a PGN or add lines from the explorer.</p>
+    <p v-if="!reordering && (state.chapters.length || state.books.length) && !sections.length" class="small muted center">No {{ sideName }} chapter yet — tap + Add to import a PGN or a lichess study, or add lines from the explorer.</p>
 
     <template v-if="!reordering">
-    <section v-for="c in tabChapters" :key="c.chapter.id" class="card file">
-      <div :class="['frow', { off: c.chapter.disabled || allOff(chapterIds(c)) }]">
+    <template v-for="s in sections" :key="s.book?.id ?? '-'">
+    <div v-if="s.book" :class="['bookhead', { off: s.book.disabled }]">
+      <span :class="['cb', selState(sectionIds(s))]" @click="sectionIds(s).length && toggleSel(sectionIds(s))"></span>
+      <div class="bmain" @click="toggleBook(s.book.id)">
+        <div class="bname">📚 {{ s.book.name }}<span v-if="s.book.disabled" class="badge b-off">off</span></div>
+        <div class="fmeta">
+          {{ s.chapters.length }} chapter{{ s.chapters.length === 1 ? '' : 's' }} · {{ sectionLines(s) }} line{{ sectionLines(s) === 1 ? '' : 's' }}
+          <template v-for="cc in [counts(sectionIds(s))]" :key="0">
+            <span v-if="cc.due" class="t-due"> · {{ cc.due }} due</span>
+            <span v-if="cc.bad" class="t-bad"> · {{ cc.bad }} missed today</span>
+          </template>
+          <span v-if="otherSideChapters(s)" class="muted"> · +{{ otherSideChapters(s) }} on the {{ tab === 'w' ? 'Black' : 'White' }} tab</span>
+          <span v-if="s.book.studies?.length" class="muted"> · ♞ lichess</span>
+        </div>
+        <button v-if="studyChanged(s.book)" class="btn sm sync-badge" @click.stop="syncBook(s.book)">{{ syncing === s.book.id ? 'Syncing…' : '⟳ Updated on lichess — sync' }}</button>
+      </div>
+      <label class="switch" :title="s.book.disabled ? 'Enable book' : 'Disable book'">
+        <input type="checkbox" :checked="!s.book.disabled" @change="setBookDisabled(s.book, !s.book.disabled)" />
+        <span></span>
+      </label>
+      <button class="icon dots" @click="menu = { kind: 'book', s }" aria-label="Book actions">⋯</button>
+      <span class="chev" @click="toggleBook(s.book.id)">{{ collapsed.has(s.book.id) ? '▸' : '▾' }}</span>
+    </div>
+    <div v-else-if="tabBooks.length" class="loosehead small muted">Chapters without a book</div>
+    <div v-if="s.book && !collapsed.has(s.book.id) && !s.chapters.length" class="small muted bookempty">No {{ sideName }} chapter in this book yet — use ⋯ to import a PGN or a lichess study into it, or move chapters here from their ⋯ menu.</div>
+    <template v-if="!s.book || !collapsed.has(s.book.id)">
+    <section v-for="c in s.chapters" :key="c.chapter.id" :class="['card file', { inbook: !!s.book }]">
+      <div :class="['frow', { off: chapterOff(c.chapter) || allOff(chapterIds(c)) }]">
         <span :class="['cb', selState(chapterIds(c))]" @click="toggleSel(chapterIds(c))"></span>
         <div class="fmain" @click="toggleOpen(c.chapter.id)">
-          <div class="fname">{{ c.chapter.name }}<span v-if="c.chapter.disabled || allOff(chapterIds(c))" class="badge b-off">off</span></div>
+          <div class="fname">{{ c.chapter.name }}<span v-if="chapterOff(c.chapter) || allOff(chapterIds(c))" class="badge b-off">off</span><span v-if="c.chapter.src" class="lich-mark" title="From a lichess study">♞</span></div>
           <div class="fmeta">
             {{ c.lines.length }} line{{ c.lines.length === 1 ? '' : 's' }}
             <template v-for="cc in [counts(chapterIds(c))]" :key="0">
@@ -597,6 +806,8 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         <div v-if="!c.lines.length" class="small muted">No line yet — import a PGN into this chapter or add lines from the explorer.</div>
       </div>
     </section>
+    </template>
+    </template>
     </template>
   </div>
 </template>

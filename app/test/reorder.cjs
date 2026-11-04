@@ -14,7 +14,7 @@ const { chromium } = require('playwright'); const path = require('path');
   await page.screenshot({ path: 'test/35-reorder.png' });
   console.log('groups:', (await page.locator('.side-head').allInnerTexts()).join(' | '), '| list:', (await page.locator('.rname').allInnerTexts()).join(' | '));
   // Black group: [caro, sample (Black)] -> move sample (Black) to top
-  await page.locator('.rrow').nth(1).locator('button[aria-label="Move to top"]').click();
+  await page.locator('.rrow.rchap').nth(1).locator('button[aria-label="Move to top"]').click();
   console.log('reorder list:', (await page.locator('.rname').allInnerTexts()).join(' | '));
   await page.click('.lib-head >> text=Done'); await page.waitForTimeout(150);
   console.log('after:', await names());

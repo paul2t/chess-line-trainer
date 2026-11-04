@@ -14,7 +14,7 @@ const { chromium } = require('playwright'); const path = require('path');
   console.log('black tab:', await view());
   await page.click('text=⇅ Reorder');
   console.log('reorder (black only):', (await page.locator('.rname').allInnerTexts()).join(' | '));
-  await page.locator('.rrow').nth(1).locator('button[aria-label="Move to top"]').click();
+  await page.locator('.rrow.rchap').nth(1).locator('button[aria-label="Move to top"]').click();
   await page.click('.lib-head >> text=Done');
   console.log('reordered:', await view());
   await page.screenshot({ path: 'test/36-tabs.png' });

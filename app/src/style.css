@@ -233,7 +233,7 @@ a.btn { text-decoration: none; text-align: center; display: inline-flex; align-i
 .tbtns .btn { white-space: nowrap; padding-left: 8px; padding-right: 8px; }
 
 /* No text selection on tap (avoids Chrome's tap-to-search on list rows and chips). */
-.lrow, .frow, .grow, .lmain, .fmain, .gmain, .chip, .crumb, .crumbs, .xrow, .movelist, .btn, .theme-pick, .selbar, .warnhead, .conf, .tbar, .status, .cb, .switch, .lines-tools, .file-actions, .train-card {
+.lrow, .frow, .bookhead, .bmain, .schap, .grow, .lmain, .fmain, .gmain, .chip, .crumb, .crumbs, .xrow, .movelist, .btn, .theme-pick, .selbar, .warnhead, .conf, .tbar, .status, .cb, .switch, .lines-tools, .file-actions, .train-card {
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
 .pgnbox { font-family: ui-monospace, monospace; font-size: 12px; -webkit-user-select: text; user-select: text; }
@@ -285,3 +285,28 @@ select.inp { appearance: auto; }
 .view-tabs button { flex: 1; }
 
 .set.hide-off { border: 0; padding: 0 2px 6px; font-size: 14px; }
+
+/* books */
+.bookhead { display: flex; align-items: center; gap: 10px; margin: 16px 0 2px; padding: 10px 12px; background: var(--card2); border-radius: 14px; border-left: 4px solid var(--accent); }
+.bookhead.off { border-left-color: #555; }
+.bookhead.off .bmain { opacity: 0.45; filter: grayscale(1); }
+.bmain { flex: 1; min-width: 0; cursor: pointer; }
+.bname { font-weight: 700; font-size: 16.5px; word-break: break-word; }
+.bname .badge { margin-left: 6px; vertical-align: 2px; }
+.card.file.inbook { margin-left: 14px; }
+.loosehead { margin: 18px 0 2px 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+.bookempty { margin: 6px 0 6px 16px; }
+.sync-badge { margin-top: 6px; color: var(--due); border-color: #6b5420; padding: 4px 9px; font-size: 13px; }
+.lich-mark { margin-left: 6px; color: var(--muted); font-size: 13px; font-weight: 400; }
+.lib-head { flex-wrap: wrap; gap: 6px; }
+.rrow.rbook { border-top: 0; }
+.rrow.rchap { padding-left: 14px; }
+.reorder .rrow.rchap:first-of-type { border-top: 1px solid var(--line); }
+.study-import .study-list { max-height: 45vh; overflow: auto; margin-top: 8px; }
+.study-import .study-list .btn { margin-bottom: 6px; text-align: left; }
+.study-name { margin-bottom: 6px; }
+.schap { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px dashed var(--line); }
+.schap.off .schap-main { opacity: 0.45; }
+.schap-main { flex: 1; min-width: 0; cursor: pointer; word-break: break-word; }
+.sidepick { flex: none; }
+.sidepick button { min-width: 38px; font-size: 18px; padding: 3px 6px; }

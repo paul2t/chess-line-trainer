@@ -41,7 +41,46 @@ export interface Chapter {
   color: Color;
   /** Chapter switched off: its lines aren't trained, whatever their own on/off state. */
   disabled?: boolean;
+  /** Book the chapter belongs to (none = loose chapter). */
+  book?: string;
+  /** Imported from a lichess study chapter: the lines that came from it (local additions are kept on sync). */
+  src?: StudySource;
   lines: StoredLine[];
+  added: number;
+  updated: number;
+}
+
+/** Where a chapter came from in a lichess study. */
+export interface StudySource {
+  study: string; // study id (8 chars)
+  chapter: string; // study chapter id (or its name when the export had no id)
+  name: string; // chapter name at the last sync (renamed here = kept on sync)
+  lines: string[]; // ids of the lines that came from the study at the last sync
+}
+
+/** A lichess study linked to a book (synchronised on demand). */
+export interface StudyLink {
+  id: string;
+  name: string;
+  syncedAt: number;
+  /** Last-Modified of the study at the last sync / check. */
+  modified?: string;
+  checkedAt?: number;
+  /** The study changed on lichess since the last sync. */
+  changed?: boolean;
+  /** Study chapters left out at import (not re-added by a sync). */
+  skip?: string[];
+}
+
+/** A book: a named group of chapters (e.g. "Caro-Kann"). It can hold White and Black chapters. */
+export interface Book {
+  id: string;
+  name: string;
+  /** Book switched off: none of its chapters is trained. */
+  disabled?: boolean;
+  /** Side tab where an empty book is shown. */
+  color?: Color;
+  studies?: StudyLink[];
   added: number;
   updated: number;
 }
@@ -96,6 +135,7 @@ const K_SEL = 'clt.selection.v1';
 const K_DIS = 'clt.disabled.v1';
 const K_DEL = 'clt.deleted.v1';
 const K_META = 'clt.metaupdated.v1';
+const K_BOOKS = 'clt.books.v1';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -120,7 +160,7 @@ export const newId = () => Math.random().toString(36).slice(2, 10);
 /* ---------- migration v1 (files → chapters → lines) to v2 (chapters → lines) ---------- */
 
 /** A line as stored, from a parsed line. */
-function storeLine(l: Line, title: string, color?: Color): StoredLine {
+export function storeLine(l: Line, title: string, color?: Color): StoredLine {
   const comments: Record<number, string> = {};
   l.moves.forEach((m, i) => { if (m.comment) comments[i] = m.comment; });
   const sl: StoredLine = { id: l.id, title, moves: l.moves.map((m) => m.uci).join(' ') };
@@ -200,6 +240,7 @@ export function normalizeChapters(chs: Chapter[]): boolean {
 
 export const state = reactive({
   chapters: initialChapters(),
+  books: load<Book[]>(K_BOOKS, []),
   stats: load<Record<string, LineStat>>(K_STATS, {}),
   settings: { sessionSize: 10, autoNext: true, repeatFailed: true, opponentDelay: 450, theme: 'blue3', pieceSet: 'cburnett', sound: true, volume: 0.7, searchColor: 'all', lichessRatings: ['400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500'], lichessSpeeds: ['blitz', 'rapid', 'classical'], missingThreshold: 10, libraryTab: 'w', searchHideOff: false, searchSelectedOnly: true, ...load<Partial<Settings>>(K_SETTINGS, {}) } as Settings,
   selection: load<string[]>(K_SEL, []),
@@ -226,6 +267,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 let tMisc = 0;
 watch(() => state.chapters, () => saveSoon(K_CHAPTERS, () => save(K_CHAPTERS, state.chapters)), { deep: true, immediate: true });
+watch(() => state.books, () => saveSoon(K_BOOKS, () => save(K_BOOKS, state.books)), { deep: true });
 watch(() => state.stats, () => saveSoon(K_STATS, () => save(K_STATS, state.stats)), { deep: true });
 /** Set while applying data that came from the cloud, so it isn't stamped as a local edit. */
 export const applying = { remote: false };
@@ -263,12 +305,20 @@ export const library = computed<LibChapter[]>(() =>
 );
 
 /** All trainable lines, deduplicated by id (same moves = same line, wherever it appears). */
+export function bookOf(c: Chapter): Book | undefined {
+  return c.book ? state.books.find((b) => b.id === c.book) : undefined;
+}
+/** The chapter is switched off, or its book is. */
+export function chapterOff(c: Chapter): boolean {
+  return !!c.disabled || !!bookOf(c)?.disabled;
+}
+
 export const allLines = computed<Map<string, LibLine>>(() => {
   const m = new Map<string, LibLine>();
   // Enabled chapters first: a line also present in a switched-off chapter stays active.
   for (const pass of [false, true])
     for (const lc of library.value) {
-      if (!!lc.chapter.disabled !== pass) continue;
+      if (chapterOff(lc.chapter) !== pass) continue;
       lc.lines.forEach((e, lineIndex) => {
         if (m.has(e.line.id) || !e.trainable) return;
         m.set(e.line.id, { line: e.line, color: e.color, chapter: lc.chapter, title: e.stored.title, lineIndex });
@@ -279,7 +329,8 @@ export const allLines = computed<Map<string, LibLine>>(() => {
 
 /** A line is off when you switched it off, or when its chapter is off. */
 export function isOff(id: string): boolean {
-  return !!state.disabled[id] || !!allLines.value.get(id)?.chapter.disabled;
+  const it = allLines.value.get(id);
+  return !!state.disabled[id] || (!!it && chapterOff(it.chapter));
 }
 
 export function userPlies(line: Line, color: Color): number {
@@ -331,14 +382,15 @@ export function guessColor(text: string): { color: Color; mixed: boolean } {
 
 const touch = (c: Chapter) => (c.updated = Date.now());
 
-export function createChapter(name: string, color: Color): Chapter {
+export function createChapter(name: string, color: Color, book?: string): Chapter {
   const c: Chapter = { id: newId(), name, color, lines: [], added: Date.now(), updated: Date.now() };
+  if (book) c.book = book;
   state.chapters.push(c);
   delete state.deletedChapters[c.id];
   return state.chapters[state.chapters.length - 1];
 }
 
-export type ImportTarget = { kind: 'new'; name: string; color: Color | 'auto' } | { kind: 'existing'; chapterId: string };
+export type ImportTarget = { kind: 'new'; name: string; color: Color | 'auto'; book?: string } | { kind: 'existing'; chapterId: string };
 
 /**
  * Import a PGN: each game becomes a line titled with its Event (games with variations are split
@@ -360,7 +412,7 @@ export function importPgn(text: string, target: ImportTarget): { chapter: Chapte
     if (target.kind === 'existing') ch = state.chapters.find((c) => c.id === target.chapterId)!;
     else {
       const name = groups.length > 1 ? `${target.name} (${SIDE_NAME[g.color!]})` : target.name;
-      ch = createChapter(name, g.color ?? (target.color === 'auto' ? 'w' : target.color));
+      ch = createChapter(name, g.color ?? (target.color === 'auto' ? 'w' : target.color), target.book);
     }
     first ??= ch;
     if (!used.includes(ch)) used.push(ch);
@@ -433,6 +485,54 @@ export function moveLine(from: Chapter, lineId: string, to: Chapter): boolean {
   touch(from);
   touch(to);
   return true;
+}
+
+/* ---------- books ---------- */
+
+export function createBook(name: string, color?: Color): Book {
+  const b: Book = { id: newId(), name, added: Date.now(), updated: Date.now() };
+  if (color) b.color = color;
+  state.books.push(b);
+  return state.books[state.books.length - 1];
+}
+export function renameBook(b: Book, name: string) {
+  b.name = name;
+  b.updated = Date.now();
+}
+export function setBookDisabled(b: Book, off: boolean) {
+  if (off) b.disabled = true; else delete b.disabled;
+  b.updated = Date.now();
+}
+export function bookChapters(bookId: string | undefined): Chapter[] {
+  return state.chapters.filter((c) => (c.book ?? '') === (bookId ?? ''));
+}
+/** Put a chapter in a book (or take it out with undefined); it goes to the end of that book. */
+export function setChapterBook(c: Chapter, bookId: string | undefined) {
+  if ((c.book ?? '') === (bookId ?? '')) return;
+  if (bookId) c.book = bookId; else delete c.book;
+  const i = state.chapters.indexOf(c);
+  const rest = state.chapters.filter((x) => x !== c);
+  let at = -1;
+  rest.forEach((x, k) => { if ((x.book ?? '') === (bookId ?? '')) at = k; });
+  state.chapters.splice(i, 1);
+  state.chapters.splice(at < 0 ? state.chapters.length : at + 1, 0, c);
+  touch(c);
+}
+/** Delete a book; its chapters are deleted too, or kept as loose chapters. */
+export function removeBook(b: Book, withChapters: boolean) {
+  for (const c of bookChapters(b.id)) {
+    if (withChapters) removeChapter(c.id);
+    else { delete c.book; touch(c); }
+  }
+  state.books = state.books.filter((x) => x !== b);
+}
+export function moveBook(id: string, to: number) {
+  const from = state.books.findIndex((b) => b.id === id);
+  if (from < 0) return;
+  to = Math.max(0, Math.min(state.books.length - 1, to));
+  if (to === from) return;
+  const [b] = state.books.splice(from, 1);
+  state.books.splice(to, 0, b);
 }
 
 /* ---------- scheduling ---------- */
@@ -587,7 +687,7 @@ export function relDay(t: number, now = Date.now()): string {
 /* ---------- backup ---------- */
 
 export function exportBackup(): string {
-  return JSON.stringify({ app: 'chess-line-trainer', v: 2, exported: Date.now(), chapters: state.chapters, stats: state.stats, settings: state.settings, disabled: state.disabled });
+  return JSON.stringify({ app: 'chess-line-trainer', v: 2, exported: Date.now(), books: state.books, chapters: state.chapters, stats: state.stats, settings: state.settings, disabled: state.disabled });
 }
 
 /** Import a backup (v2 chapters, or v1 PGN files which are migrated). Chapters are matched by id, then name. */
@@ -595,12 +695,15 @@ export function importBackup(json: string): string {
   const data = JSON.parse(json);
   if (data.app !== 'chess-line-trainer') throw new Error('Not a Chess Line Trainer backup');
   const incoming: Chapter[] = data.chapters ?? ((data.files ?? []) as PgnFile[]).map(migrateFile);
+  for (const b of (data.books ?? []) as Book[]) if (!state.books.some((x) => x.id === b.id)) state.books.push(b);
   let nc = 0;
   for (const c of incoming) {
     const ex = state.chapters.find((x) => x.id === c.id) ?? state.chapters.find((x) => x.name === c.name);
     if (ex) {
       const have = new Set(ex.lines.map((l) => l.id));
       for (const l of c.lines) if (!have.has(l.id)) ex.lines.push(l);
+      if (c.book && !ex.book) ex.book = c.book;
+      if (c.src && !ex.src) ex.src = c.src;
       touch(ex);
     } else { state.chapters.push({ ...c, updated: Date.now() }); nc++; }
     delete state.deletedChapters[c.id];

@@ -8,7 +8,7 @@ const { chromium } = require('playwright'); const path = require('path');
   // 1. import as a new chapter (default)
   await page.setInputFiles('input[type=file]', 'test/caro.pgn');
   await page.waitForSelector('.modal');
-  console.log('modal default target:', await page.locator('.pend-block select').inputValue(), '| name:', await page.locator('.pend-block input').inputValue(), '| side:', await page.locator('.pend-block .seg .on').innerText());
+  console.log('modal default target:', await page.locator('.pend-block select >> nth=0').inputValue(), '| name:', await page.locator('.pend-block input >> nth=0').inputValue(), '| side:', await page.locator('.pend-block .seg .on').innerText());
   await page.click('.pend-block .seg button:has-text("Black")');
   await page.click('.modal .btn.primary'); await page.waitForTimeout(300);
   console.log('1:', await toast());
@@ -18,15 +18,15 @@ const { chromium } = require('playwright'); const path = require('path');
   // 2. import the same file into the existing chapter
   await page.setInputFiles('input[type=file]', 'test/caro.pgn');
   await page.waitForSelector('.modal');
-  const chId = await page.locator('.pend-block select option').nth(1).getAttribute('value');
-  await page.selectOption('.pend-block select', chId);
+  const chId = await page.locator('.pend-block select >> nth=0 >> option').nth(1).getAttribute('value');
+  await page.selectOption('.pend-block select >> nth=0', chId);
   await page.click('.modal .btn.primary'); await page.waitForTimeout(300);
   console.log('2:', await toast(), '| chapters:', await page.locator('.fname').count());
   // 3. paste a PGN with variations as a new chapter
-  await page.click('.lib-head >> text=Paste');
+  await page.click('.lib-head .btn.primary'); await page.click('.sheet >> text=Paste PGN');
   await page.fill('.library textarea', require('fs').readFileSync('test/sample.pgn', 'utf8'));
   await page.click('text=Next ›'); await page.waitForSelector('.modal');
-  await page.fill('.pend-block input', 'Mixed');
+  await page.fill('.pend-block input >> nth=0', 'Mixed');
   await page.click('.pend-block .seg button:has-text("Split by side")');
   await page.click('.modal .btn.primary'); await page.waitForTimeout(300);
   console.log('3:', await toast(), '| chapters:', (await page.locator('.fname').allInnerTexts()).join(', '));

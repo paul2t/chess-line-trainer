@@ -52,7 +52,7 @@ function b64url(bytes: Uint8Array): string {
 }
 const redirectUri = () => location.origin + location.pathname;
 
-/** Redirect to lichess to log in (OAuth 2 PKCE, no scopes: read-only public data). */
+/** Redirect to lichess to log in (OAuth 2 PKCE; study:read = your private and unlisted studies, read-only). */
 export async function login() {
   if (!crypto?.subtle || location.protocol !== 'https:') {
     lichess.message = 'Lichess login needs the page to be opened from its web address (https). Paste a token instead.';
@@ -64,7 +64,7 @@ export async function login() {
   lsSet(K_PKCE, JSON.stringify({ verifier, state: st }));
   const q = new URLSearchParams({
     response_type: 'code', client_id: CLIENT_ID, redirect_uri: redirectUri(),
-    code_challenge_method: 'S256', code_challenge: challenge, state: st,
+    code_challenge_method: 'S256', code_challenge: challenge, state: st, scope: 'study:read',
   });
   location.href = 'https://lichess.org/oauth?' + q.toString();
 }

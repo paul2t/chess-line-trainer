@@ -1,0 +1,26 @@
+[Event "Caro-Kann Rep: Advance"]
+[Site "https://lichess.org/study/AbCdEfGh/Ch000001"]
+[StudyName "Caro-Kann Rep"]
+[ChapterName "Advance"]
+[ChapterURL "https://lichess.org/study/AbCdEfGh/Ch000001"]
+[Orientation "black"]
+
+1. e4 c6 2. d4 d5 3. e5 Bf5 (3... c5 4. dxc5 e6) 4. Nf3 e6 *
+
+[Event "Caro-Kann Rep: As White"]
+[Site "https://lichess.org/study/AbCdEfGh/Ch000003"]
+[StudyName "Caro-Kann Rep"]
+[ChapterName "As White"]
+[ChapterURL "https://lichess.org/study/AbCdEfGh/Ch000003"]
+[Orientation "white"]
+
+1. e4 c6 2. Nc3 d5 3. Nf3 *
+
+[Event "Caro-Kann Rep: Two Knights"]
+[Site "https://lichess.org/study/AbCdEfGh/Ch000004"]
+[StudyName "Caro-Kann Rep"]
+[ChapterName "Two Knights"]
+[ChapterURL "https://lichess.org/study/AbCdEfGh/Ch000004"]
+[Orientation "black"]
+
+1. e4 c6 2. Nc3 d5 3. Nf3 Bg4 4. h3 Bxf3 *
