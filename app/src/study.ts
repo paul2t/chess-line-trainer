@@ -42,7 +42,7 @@ const authHeaders = (): Record<string, string> => (lichess.token ? { Authorizati
 function errorText(status: number): string {
   if (status === 404 || status === 401 || status === 403)
     return lichess.token
-      ? 'Study not found, or you have no access to it. For a private study, log out and log in to lichess again (Settings) to allow study access.'
+      ? 'Study not found, or you have no access to it. For a private or unlisted study, tap “Allow access to my studies” (here or in Settings).'
       : 'Study not found. If it is private or unlisted, log in to lichess first (Settings).';
   if (status === 429) return 'Lichess is rate-limiting requests — try again in a minute.';
   return `Lichess answered ${status}.`;

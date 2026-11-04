@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import type { Color } from './pgn';
 import { state } from './store';
-import { lichess } from './lichess';
+import { lichess, login, studyAccess } from './lichess';
 import { fetchStudy, myStudies, parseStudyId, planSync, applySync, planSummary, studySide, includeSide, type Study } from './study';
 
 const props = defineProps<{ bookId?: string }>();
@@ -66,13 +66,15 @@ const day = (t: number) => (t ? new Date(t).toLocaleDateString() : '');
     <div class="modal card study-import">
       <h3>Import a lichess study</h3>
       <template v-if="!study">
-        <p class="small muted">Each chapter of the study becomes a chapter (you play the side of its board orientation), each variation a line. The book keeps the link to the study so you can sync it again after editing it on lichess.</p>
+        <p class="small muted">Each study chapter for the book’s side becomes a chapter, each variation a line. The book keeps the link to the study so you can sync it again after editing it on lichess.</p>
         <input class="inp" v-model="input" placeholder="https://lichess.org/study/…" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" @keydown.enter="load()" />
         <div class="row2">
           <button class="btn primary wide" :disabled="busy" @click="load()">{{ busy ? 'Loading…' : 'Load study' }}</button>
           <button v-if="lichess.token" class="btn wide" :disabled="busy" @click="loadMine">My studies</button>
         </div>
         <p v-if="!lichess.token" class="small muted">Public studies work without logging in. For your private or unlisted studies, log in to lichess in Settings.</p>
+        <p v-else-if="studyAccess === false" class="small muted">Your lichess login only allows public studies.
+          <button class="btn sm" @click="login">Allow access to my studies</button></p>
         <div v-if="mine" class="study-list">
           <p v-if="!mine.length" class="small muted">No study found on your account.</p>
           <button v-for="s in mine" :key="s.id" class="btn wide" @click="load(s.id)">{{ s.name }} <span class="muted small">· {{ day(s.updatedAt) }}</span></button>

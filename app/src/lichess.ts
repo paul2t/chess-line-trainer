@@ -29,6 +29,8 @@ const GAP_MS = Number(lsGet('clt.test.gap')) || 3200; // ≈ 19 requests per min
 export const lichess = reactive({
   token: lsGet(K_TOKEN) ?? '',
   user: '',
+  /** Permissions of the token (comma separated), null = unknown yet. */
+  scopes: null as string | null,
   status: 'idle' as 'idle' | 'running' | 'paused' | 'done' | 'error' | 'noauth' | 'blocked',
   message: '',
   done: 0,
@@ -89,6 +91,9 @@ export async function completeLogin(): Promise<string | null> {
     if (!r.ok) return `Lichess login failed (${r.status}).`;
     const j = (await r.json()) as { access_token?: string };
     if (!j.access_token) return 'Lichess login failed (no token).';
+    // Logging in again while logged in (e.g. to allow study access): revoke the previous token.
+    const old = lichess.token;
+    if (old && old !== j.access_token) fetch('https://lichess.org/api/token', { method: 'DELETE', headers: { Authorization: 'Bearer ' + old } }).catch(() => {});
     setToken(j.access_token);
     return 'Logged in to lichess ✓';
   } catch (e) {
@@ -100,6 +105,7 @@ export function setToken(t: string) {
   lichess.token = t.trim();
   lsSet(K_TOKEN, lichess.token || null);
   lichess.user = '';
+  lichess.scopes = null;
   if (lichess.token) { fetchUser(); kick(); }
 }
 
@@ -111,11 +117,25 @@ export async function logout() {
 }
 
 async function fetchUser() {
+  const t = lichess.token;
   try {
-    const r = await fetch('https://lichess.org/api/account', { headers: { Authorization: 'Bearer ' + lichess.token } });
+    const r = await fetch('https://lichess.org/api/account', { headers: { Authorization: 'Bearer ' + t } });
     if (r.ok) lichess.user = ((await r.json()) as { username?: string }).username ?? '';
   } catch { /* ignore */ }
+  try {
+    // Which permissions the token has (to offer study access when it's missing).
+    const r = await fetch('https://lichess.org/api/token/test', { method: 'POST', body: t });
+    if (r.ok && lichess.token === t) {
+      const j = (await r.json()) as Record<string, { scopes?: string } | null>;
+      lichess.scopes = j[t]?.scopes ?? '';
+    }
+  } catch { /* ignore */ }
 }
+
+/** The login can read your private and unlisted studies (null = not known yet). */
+export const studyAccess = computed<boolean | null>(() =>
+  lichess.scopes === null ? null : lichess.scopes.split(',').map((x) => x.trim()).includes('study:read'),
+);
 
 /* ---------------- cache ---------------- */
 

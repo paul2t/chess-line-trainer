@@ -310,3 +310,4 @@ select.inp { appearance: auto; }
 .schap-main { flex: 1; min-width: 0; cursor: pointer; word-break: break-word; }
 .sidepick { flex: none; }
 .sidepick button { min-width: 38px; font-size: 18px; padding: 3px 6px; }
+.study-access { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }

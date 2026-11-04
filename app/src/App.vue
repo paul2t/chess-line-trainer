@@ -7,7 +7,7 @@ import { state, allLines, isOff, recordAttempt, exportBackup, importBackup, stor
 import { cloud, saveFile, flush } from './cloud';
 import { confirmState, answerConfirm, askConfirm } from './confirm';
 import { playSound } from './sound';
-import { lichess, login, logout, setToken, refreshAll, initLichess, sandboxed, popularity, RATINGS, SPEEDS, SPEED_LABEL } from './lichess';
+import { lichess, login, logout, setToken, studyAccess, refreshAll, initLichess, sandboxed, popularity, RATINGS, SPEEDS, SPEED_LABEL } from './lichess';
 import { formatMoves } from './pgn';
 import { BOARDS } from './assets/boards';
 import { PIECE_SETS } from './assets/pieces';
@@ -412,12 +412,20 @@ const storageKb = computed(() => {
             <button class="btn sm" @click="refreshAll">Refresh now</button>
             <button class="btn sm" @click="logout">Log out</button>
           </div>
+          <div v-if="lichess.token && studyAccess !== null" class="study-access small">
+            <template v-if="studyAccess">♞ Your private and unlisted studies can be imported ✓</template>
+            <template v-else>
+              <span class="muted">♞ This login can only import public studies.</span>
+              <button class="btn sm primary" @click="login">Allow access to my studies</button>
+            </template>
+          </div>
+          <p class="small muted" v-if="lichess.token && lichess.message">{{ lichess.message }}</p>
           <template v-else>
             <button class="btn primary wide" @click="login">Log in with lichess</button>
             <p class="small muted" v-if="lichess.message">{{ lichess.message }}</p>
             <details class="small">
               <summary class="muted">or paste a token</summary>
-              <p class="muted">Create one at lichess.org/account/oauth/token without ticking any permission, then paste it here.</p>
+              <p class="muted">Create one at lichess.org/account/oauth/token (tick “Read private studies” to import your private studies), then paste it here.</p>
               <div class="pinput"><input class="inp" v-model="tokenInput" placeholder="lip_…" autocomplete="off" /><button class="btn sm primary" @click="setToken(tokenInput); tokenInput = ''">Save</button></div>
             </details>
           </template>
