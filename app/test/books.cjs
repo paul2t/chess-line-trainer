@@ -31,7 +31,7 @@ const { chromium } = require('playwright'); const path = require('path'); const 
   console.log('  my studies:', await t('.study-list .btn'));
   await page.click('.study-list .btn >> nth=0'); await page.waitForTimeout(300);
   console.log('2 preview:', await t('.study-import .study-name'), '|', await t('.schap'));
-  console.log('  sides on:', await page.$$eval('.schap', (els) => els.map((e) => e.querySelector('.sidepick .on')?.textContent).join(' ')));
+  console.log('  side:', await t('.study-import .seg .on'), '| ticked:', await page.$$eval('.schap', (els) => els.map((e) => (e.querySelector('.cb.all') ? '☑' : '☐') + e.querySelector('.schap-main div').textContent).join(' ')), '|', await t('.study-import p.small.muted'));
   await page.click('.study-import .btn.primary'); await page.waitForTimeout(300);
   console.log('3 toast:', await t('.toast'));
   console.log('  black tab:', await t('.bookhead'), '|', await t('.card.file.inbook .fname'));
@@ -39,6 +39,14 @@ const { chromium } = require('playwright'); const path = require('path'); const 
   console.log('  white tab:', await t('.bookhead'), '|', await t('.card.file.inbook .fname'));
   await page.click('.side-tabs button:has-text("Black")'); await page.waitForTimeout(150);
   console.log('  black again:', await t('.card.file.inbook .fname'));
+  // import the same study again as a White book: only its White chapter
+  await add(); await page.click('text=Import a lichess study'); await page.fill('.study-import .inp', 'AbCdEfGh'); await page.click('text=Load study'); await page.waitForTimeout(300);
+  await page.click('.study-import .seg button:has-text("I play White")'); await page.waitForTimeout(100);
+  await page.fill('.study-import input[placeholder="Book name"]', 'Caro-Kann as White');
+  console.log('3b white import:', await page.$$eval('.schap', (els) => els.map((e) => (e.querySelector('.cb.all') ? '☑' : '☐') + e.querySelector('.schap-main div').textContent).join(' ')), '|', await t('.study-import .warn'));
+  await page.click('.study-import .btn.primary'); await page.waitForTimeout(300);
+  console.log('   toast:', await t('.toast'), '| tab:', await t('.side-tabs .on'), '|', await t('.bookhead .bname'), '|', await t('.card.file.inbook .fname'));
+  await page.click('.side-tabs button:has-text("Black")'); await page.waitForTimeout(150);
 
   // 4. local line added to "Advance" via paste into existing chapter
   await add(); await page.click('text=Paste PGN');

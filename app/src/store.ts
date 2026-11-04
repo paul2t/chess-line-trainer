@@ -72,14 +72,14 @@ export interface StudyLink {
   skip?: string[];
 }
 
-/** A book: a named group of chapters (e.g. "Caro-Kann"). It can hold White and Black chapters. */
+/** A book: a named group of chapters of one side (e.g. "Caro-Kann" for Black). */
 export interface Book {
   id: string;
   name: string;
   /** Book switched off: none of its chapters is trained. */
   disabled?: boolean;
-  /** Side tab where an empty book is shown. */
-  color?: Color;
+  /** The side you play in all its chapters. */
+  color: Color;
   studies?: StudyLink[];
   added: number;
   updated: number;
@@ -238,9 +238,37 @@ export function normalizeChapters(chs: Chapter[]): boolean {
   return changed;
 }
 
+/**
+ * One side per book: chapters of the other side move to a sibling book "<name> (White|Black)"
+ * (stable id <id>-w / <id>-b) that keeps the same lichess study links.
+ */
+function normalizeBooks(books: Book[], chapters: Chapter[] = loadedChapters): Book[] {
+  for (const b of [...books]) {
+    const chs = chapters.filter((c) => c.book === b.id);
+    if (!b.color) {
+      const black = chs.filter((c) => c.color === 'b').length;
+      b.color = black > chs.length / 2 ? 'b' : 'w';
+    }
+    const other = chs.filter((c) => c.color !== b.color);
+    if (!other.length) continue;
+    const color: Color = b.color === 'w' ? 'b' : 'w';
+    const sid = `${b.id}-${color}`;
+    let sib = books.find((x) => x.id === sid);
+    if (!sib) {
+      sib = { id: sid, name: `${b.name} (${SIDE_NAME[color]})`, color, added: b.added, updated: Date.now() };
+      if (b.disabled) sib.disabled = true;
+      if (b.studies) sib.studies = b.studies.map((x) => ({ ...x, skip: undefined }));
+      books.splice(books.indexOf(b) + 1, 0, sib);
+    }
+    for (const c of other) c.book = sid;
+  }
+  return books;
+}
+const loadedChapters = initialChapters();
+
 export const state = reactive({
-  chapters: initialChapters(),
-  books: load<Book[]>(K_BOOKS, []),
+  chapters: loadedChapters,
+  books: normalizeBooks(load<Book[]>(K_BOOKS, [])),
   stats: load<Record<string, LineStat>>(K_STATS, {}),
   settings: { sessionSize: 10, autoNext: true, repeatFailed: true, opponentDelay: 450, theme: 'blue3', pieceSet: 'cburnett', sound: true, volume: 0.7, searchColor: 'all', lichessRatings: ['400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500'], lichessSpeeds: ['blitz', 'rapid', 'classical'], missingThreshold: 10, libraryTab: 'w', searchHideOff: false, searchSelectedOnly: true, ...load<Partial<Settings>>(K_SETTINGS, {}) } as Settings,
   selection: load<string[]>(K_SEL, []),
@@ -267,7 +295,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 let tMisc = 0;
 watch(() => state.chapters, () => saveSoon(K_CHAPTERS, () => save(K_CHAPTERS, state.chapters)), { deep: true, immediate: true });
-watch(() => state.books, () => saveSoon(K_BOOKS, () => save(K_BOOKS, state.books)), { deep: true });
+watch(() => state.books, () => saveSoon(K_BOOKS, () => save(K_BOOKS, state.books)), { deep: true, immediate: true });
 watch(() => state.stats, () => saveSoon(K_STATS, () => save(K_STATS, state.stats)), { deep: true });
 /** Set while applying data that came from the cloud, so it isn't stamped as a local edit. */
 export const applying = { remote: false };
@@ -469,6 +497,8 @@ export function renameLine(c: Chapter, lineId: string, title: string) {
 /** The side you play in all the chapter's lines. */
 export function setChapterColor(c: Chapter, color: Color) {
   c.color = color;
+  // A book is for one side: the chapter leaves a book of the other side.
+  if (c.book && state.books.find((b) => b.id === c.book)?.color !== color) delete c.book;
   touch(c);
 }
 /** Switch a whole chapter off/on (the lines' own on/off states are kept). */
@@ -489,9 +519,8 @@ export function moveLine(from: Chapter, lineId: string, to: Chapter): boolean {
 
 /* ---------- books ---------- */
 
-export function createBook(name: string, color?: Color): Book {
-  const b: Book = { id: newId(), name, added: Date.now(), updated: Date.now() };
-  if (color) b.color = color;
+export function createBook(name: string, color: Color): Book {
+  const b: Book = { id: newId(), name, color, added: Date.now(), updated: Date.now() };
   state.books.push(b);
   return state.books[state.books.length - 1];
 }
@@ -709,6 +738,7 @@ export function importBackup(json: string): string {
     delete state.deletedChapters[c.id];
   }
   normalizeChapters(state.chapters);
+  normalizeBooks(state.books, state.chapters);
   let ns = 0;
   for (const [id, st] of Object.entries((data.stats ?? {}) as Record<string, LineStat>)) {
     const cur = state.stats[id];

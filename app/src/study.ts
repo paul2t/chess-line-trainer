@@ -16,8 +16,19 @@ import { lichess } from './lichess';
 
 const API = 'https://lichess.org';
 
-export interface StudyChapter { id: string; name: string; color: Color; lines: { title: string; line: Line }[]; include: boolean }
+/** `orientation` = side of the study chapter's board; on import every chapter is played from the book's side. */
+export interface StudyChapter { id: string; name: string; orientation: Color; lines: { title: string; line: Line }[]; include: boolean }
 export interface Study { id: string; name: string; chapters: StudyChapter[]; modified?: string }
+
+/** Side most of the study's chapters are for. */
+export function studySide(st: Study): Color {
+  const black = st.chapters.filter((c) => c.orientation === 'b').length;
+  return black > st.chapters.length / 2 ? 'b' : 'w';
+}
+/** Tick the chapters whose board is oriented for `side`. */
+export function includeSide(st: Study, side: Color) {
+  for (const c of st.chapters) c.include = c.orientation === side;
+}
 
 /** Study id from a URL (lichess.org/study/XXXXXXXX[/chapter]) or a bare 8-character id. */
 export function parseStudyId(s: string): string | null {
@@ -72,13 +83,13 @@ export function parseStudy(text: string, id: string): Study {
     const url = h.ChapterURL ?? h.Site ?? '';
     const cid = url.match(/study\/[A-Za-z0-9]{8}\/([A-Za-z0-9]{8})/)?.[1] ?? nameOf(h, i);
     const o = (h.Orientation ?? '').toLowerCase();
-    const color: Color = o === 'black' ? 'b' : o === 'white' ? 'w' : g.guessedColor;
+    const orientation: Color = o === 'black' ? 'b' : o === 'white' ? 'w' : g.guessedColor;
     const seen = new Set<string>();
     const lines = parts
       .filter((p) => p.game === g && p.line.moves.length > 0)
       .filter((p) => (seen.has(p.line.id) ? false : (seen.add(p.line.id), true)))
       .map((p) => ({ title: p.title, line: p.line }));
-    if (lines.length) chapters.push({ id: cid, name: nameOf(h, i), color, lines, include: true });
+    if (lines.length) chapters.push({ id: cid, name: nameOf(h, i), orientation, lines, include: true });
   });
   return { id, name, chapters };
 }
@@ -107,6 +118,11 @@ export interface ChapterChange { chapter: Chapter; add: number; remove: number; 
 export interface SyncPlan {
   study: Study;
   book: Book | null; // null = a new book is created
+  side: Color; // side of the book
+  /** Chapters of this study that belong to this book (or to no book that is linked to it). */
+  mine: Chapter[];
+  /** New study chapters left out because their board is for the other side. */
+  otherSide: StudyChapter[];
   newChapters: StudyChapter[];
   changes: ChapterChange[];
   /** Chapters deleted from the study: deleted here (or kept, unlinked, when they hold lines you added). */
@@ -117,15 +133,24 @@ export interface SyncPlan {
 
 const linked = (studyId: string) => state.chapters.filter((c) => c.src?.study === studyId);
 
-/** What a sync (or first import) of `study` into `book` would change. */
-export function planSync(study: Study, book: Book | null): SyncPlan {
+/**
+ * What a sync (or first import) of `study` into `book` would change. A study can feed several books
+ * (e.g. its White chapters into one, its Black chapters into another): each book owns the chapters
+ * it holds, new study chapters go to the book of their side.
+ */
+export function planSync(study: Study, book: Book | null, side: Color = book?.color ?? studySide(study)): SyncPlan {
   const link = book?.studies?.find((s) => s.id === study.id);
   const skip = new Set(link ? link.skip ?? [] : study.chapters.filter((c) => !c.include).map((c) => c.id));
-  const mine = linked(study.id);
-  const plan: SyncPlan = { study, book, newChapters: [], changes: [], gone: [], addedLines: 0, removedLines: 0 };
+  const all = linked(study.id);
+  const otherBook = (c: Chapter) =>
+    !!c.book && c.book !== book?.id && !!state.books.find((b) => b.id === c.book)?.studies?.some((s) => s.id === study.id);
+  const mine = all.filter((c) => !otherBook(c));
+  const taken = new Set(all.filter(otherBook).map((c) => c.src!.chapter));
+  const plan: SyncPlan = { study, book, side, mine, otherSide: [], newChapters: [], changes: [], gone: [], addedLines: 0, removedLines: 0 };
   for (const sc of study.chapters) {
-    if (skip.has(sc.id)) continue;
+    if (skip.has(sc.id) || taken.has(sc.id)) continue;
     const ch = mine.find((c) => c.src!.chapter === sc.id);
+    if (!ch && link && sc.orientation !== side) { plan.otherSide.push(sc); continue; }
     if (!ch) { plan.newChapters.push(sc); plan.addedLines += sc.lines.length; continue; }
     const now = new Set(sc.lines.map((l) => l.line.id));
     const have = new Set(ch.lines.map((l) => l.id));
@@ -138,7 +163,7 @@ export function planSync(study: Study, book: Book | null): SyncPlan {
     plan.removedLines += remove;
   }
   const ids = new Set(study.chapters.map((c) => c.id));
-  for (const ch of mine)
+  for (const ch of plan.mine)
     if (!ids.has(ch.src!.chapter)) {
       const was = new Set(ch.src!.lines);
       plan.gone.push({ chapter: ch, keep: ch.lines.some((l) => !was.has(l.id)) });
@@ -153,10 +178,7 @@ export const planIsEmpty = (p: SyncPlan) => !p.newChapters.length && !p.changes.
 export function applySync(plan: SyncPlan): Book {
   const { study } = plan;
   let book = plan.book;
-  if (!book) {
-    const sides = study.chapters.filter((c) => c.include).map((c) => c.color);
-    book = createBook(study.name, sides.filter((c) => c === 'b').length > sides.length / 2 ? 'b' : 'w');
-  }
+  if (!book) book = createBook(study.name, plan.side);
   book.studies ??= [];
   let link = book.studies.find((s) => s.id === study.id);
   if (!link) {
@@ -175,12 +197,12 @@ export function applySync(plan: SyncPlan): Book {
 
   const byId = new Map(study.chapters.map((c) => [c.id, c]));
   for (const sc of plan.newChapters) {
-    const ch = createChapter(sc.name, sc.color, book.id);
+    const ch = createChapter(sc.name, book.color, book.id);
     ch.lines = sc.lines.map((l) => storeLine(l.line, l.title));
     ch.src = { study: study.id, chapter: sc.id, name: sc.name, lines: sc.lines.map((l) => l.line.id) };
     setChapterBook(ch, book.id); // keeps the book's chapters together
   }
-  for (const ch of linked(study.id)) {
+  for (const ch of plan.mine) {
     const sc = byId.get(ch.src!.chapter);
     if (!sc) continue;
     const was = new Set(ch.src!.lines);
@@ -218,7 +240,9 @@ export function planSummary(p: SyncPlan): string {
   if (renamed) parts.push(`${renamed} renamed`);
   if (p.addedLines) parts.push(`+${p.addedLines} line${p.addedLines === 1 ? '' : 's'}`);
   if (p.removedLines) parts.push(`−${p.removedLines} line${p.removedLines === 1 ? '' : 's'}`);
-  return parts.join(' · ') || 'already up to date';
+  const out = parts.join(' · ') || 'already up to date';
+  const o = p.otherSide.length;
+  return o ? `${out} (${o} new chapter${o === 1 ? '' : 's'} for the other side left out)` : out;
 }
 
 /* ---------------- change check ---------------- */

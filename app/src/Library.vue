@@ -228,7 +228,8 @@ const pending = ref<Pending[]>([]);
 function pend(name: string, text: string): Pending {
   const g = guessColor(text);
   const lines = (text.match(/\[Event /g) ?? []).length;
-  return { name, text, color: state.settings.libraryTab, mixed: g.mixed, target: 'new', book: importBook.value, lines };
+  const book = state.books.find((b) => b.id === importBook.value);
+  return { name, text, color: book?.color ?? state.settings.libraryTab, mixed: g.mixed, target: 'new', book: book?.id ?? '', lines };
 }
 async function onFiles(ev: Event) {
   const files = (ev.target as HTMLInputElement).files;
@@ -257,7 +258,12 @@ function confirmImport() {
   emit('toast', msgs.join('\n'));
 }
 function setAllPending(c: Color | 'auto') {
-  pending.value.forEach((p) => (p.color = c));
+  pending.value.forEach((p) => { if (!p.book) p.color = c; });
+}
+/** A book is for one side: its chapters take its side. */
+function pickBook(p: Pending) {
+  const b = state.books.find((x) => x.id === p.book);
+  if (b) p.color = b.color;
 }
 
 /* ---------- chapter & line actions ---------- */
@@ -288,11 +294,7 @@ interface Section { book: Book | null; chapters: LibChapter[] }
 const sections = computed<Section[]>(() => {
   const known = new Set(state.books.map((b) => b.id));
   const out: Section[] = [];
-  for (const b of state.books) {
-    const chs = tabChapters.value.filter((c) => c.chapter.book === b.id);
-    const empty = !state.chapters.some((c) => c.book === b.id);
-    if (chs.length || (empty && (b.color ?? tab.value) === tab.value)) out.push({ book: b, chapters: chs });
-  }
+  for (const b of state.books) if (b.color === tab.value) out.push({ book: b, chapters: tabChapters.value.filter((c) => c.chapter.book === b.id) });
   const loose = tabChapters.value.filter((c) => !c.chapter.book || !known.has(c.chapter.book));
   if (loose.length) out.push({ book: null, chapters: loose });
   return out;
@@ -302,7 +304,6 @@ const sectionLines = (s: Section) => s.chapters.reduce((n, c) => n + c.lines.len
 const tabBooks = computed(() => sections.value.filter((s) => s.book).map((s) => s.book!));
 const collapsed = reactive(new Set<string>());
 const toggleBook = (id: string) => (collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id));
-const otherSideChapters = (s: Section) => (s.book ? bookChapters(s.book.id).length - s.chapters.length : 0);
 const showStudy = ref(false);
 const studyBook = ref<string | undefined>(undefined);
 const syncing = ref('');
@@ -346,9 +347,8 @@ function openStudy(b?: Book) {
 function studyDone(bookId: string, msg: string) {
   showStudy.value = false;
   collapsed.delete(bookId);
-  const chs = bookChapters(bookId);
-  const black = chs.filter((c) => c.color === 'b').length;
-  if (chs.length) state.settings.libraryTab = black > chs.length / 2 ? 'b' : black === chs.length / 2 ? tab.value : 'w';
+  const b = state.books.find((x) => x.id === bookId);
+  if (b) state.settings.libraryTab = b.color;
   now.value = Date.now();
   emit('toast', msg);
 }
@@ -378,7 +378,8 @@ async function syncBook(b: Book) {
   syncing.value = '';
   now.value = Date.now();
 }
-const booksExcept = (id?: string) => state.books.filter((x) => x.id !== id);
+/** Books a chapter can move to: the other books of its side. */
+const booksFor = (c: Chapter) => state.books.filter((x) => x.id !== c.book && x.color === c.color);
 const chaptersExcept = (id: string) => state.chapters.filter((x) => x.id !== id);
 const studyChanged = (b: Book) => (b.studies ?? []).some((s) => s.changed);
 function chapterToBook(c: LibChapter, bookId: string | undefined) {
@@ -406,8 +407,9 @@ async function delChapter(c: LibChapter) {
 }
 function switchSide(c: LibChapter) {
   menu.value = null;
+  const b = state.books.find((x) => x.id === c.chapter.book);
   setChapterColor(c.chapter, c.chapter.color === 'w' ? 'b' : 'w');
-  emit('toast', `You now play ${c.chapter.color === 'w' ? 'White' : 'Black'} in “${c.chapter.name}”`);
+  emit('toast', `You now play ${c.chapter.color === 'w' ? 'White' : 'Black'} in “${c.chapter.name}”${b ? ` — taken out of the ${b.color === 'w' ? 'White' : 'Black'} book “${b.name}”` : ''}`);
 }
 async function renameCh(c: LibChapter) {
   menu.value = null;
@@ -619,11 +621,12 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
           </select>
           <template v-if="p.target === 'new'">
             <input class="inp" v-model="p.name" placeholder="Chapter name" />
-            <select class="inp" v-model="p.book">
+            <select class="inp" v-model="p.book" @change="pickBook(p)">
               <option value="">No book</option>
-              <option v-for="b in state.books" :key="b.id" :value="b.id">📚 {{ b.name }}</option>
+              <option v-for="b in state.books" :key="b.id" :value="b.id">📚 {{ b.color === 'w' ? '♔' : '♚' }} {{ b.name }}</option>
             </select>
-            <div class="seg">
+            <p v-if="p.book" class="small muted">You play {{ p.color === 'w' ? 'White' : 'Black' }}, the side of this book.</p>
+            <div v-else class="seg">
               <button :class="{ on: p.color === 'w' }" @click="p.color = 'w'">♔ White</button>
               <button :class="{ on: p.color === 'b' }" @click="p.color = 'b'">♚ Black</button>
               <button v-if="p.mixed" :class="{ on: p.color === 'auto' }" @click="p.color = 'auto'" title="Games look like a mix of White and Black repertoires: one chapter per side">Split by side</button>
@@ -657,7 +660,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         </template>
         <template v-else-if="menu.kind === 'chbook'">
           <h3>Move “{{ menu.c.chapter.name }}” to</h3>
-          <button v-for="b in booksExcept(menu.c.chapter.book)" :key="b.id" class="btn wide" @click="chapterToBook(menu!.c, b.id)">📚 {{ b.name }}</button>
+          <button v-for="b in booksFor(menu.c.chapter)" :key="b.id" class="btn wide" @click="chapterToBook(menu!.c, b.id)">📚 {{ b.name }}</button>
           <button class="btn wide" @click="chapterToNewBook(menu.c)">➕ New book…</button>
           <button v-if="menu.c.chapter.book" class="btn wide" @click="chapterToBook(menu.c, undefined)">No book</button>
         </template>
@@ -669,7 +672,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
           <button class="btn wide" @click="openStudy(menu.s.book!)">♞ Import a lichess study into it</button>
           <button class="btn wide" @click="importPgnInto(menu.s.book!)">＋ Import PGN into it</button>
           <button class="btn wide" @click="renameBk(menu.s.book!)">✎ Rename</button>
-          <button class="btn wide" @click="copyBook(menu.s)">⧉ Copy {{ sideName }} chapters as PGN</button>
+          <button class="btn wide" @click="copyBook(menu.s)">⧉ Copy as PGN</button>
           <button class="btn wide danger" @click="menu = { kind: 'bookdel', b: menu.s.book! }">🗑 Delete book…</button>
           <p v-for="st in menu.s.book!.studies ?? []" :key="st.id" class="small muted">
             Linked to <a :href="`https://lichess.org/study/${st.id}`" target="_blank" rel="noopener">{{ st.name }} ↗</a> · synced {{ relDay(st.syncedAt, now) }}<span v-if="st.changed" class="t-due"> · changed on lichess</span>
@@ -741,7 +744,6 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
             <span v-if="cc.due" class="t-due"> · {{ cc.due }} due</span>
             <span v-if="cc.bad" class="t-bad"> · {{ cc.bad }} missed today</span>
           </template>
-          <span v-if="otherSideChapters(s)" class="muted"> · +{{ otherSideChapters(s) }} on the {{ tab === 'w' ? 'Black' : 'White' }} tab</span>
           <span v-if="s.book.studies?.length" class="muted"> · ♞ lichess</span>
         </div>
         <button v-if="studyChanged(s.book)" class="btn sm sync-badge" @click.stop="syncBook(s.book)">{{ syncing === s.book.id ? 'Syncing…' : '⟳ Updated on lichess — sync' }}</button>
