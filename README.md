@@ -5,6 +5,7 @@ Train your opening repertoire on your phone: load PGNs, drill every line, review
 **Open it:** https://paul2t.github.io/chess-line-trainer/
 
 - Your repertoire is a list of **chapters**, each a list of **lines** (a title and a sequence of moves). A chapter is for one side; move a line to another chapter to train it from the other side. Chapters and lines can each be switched off.
+- Import a **.zip of PGN files** as a book: one chapter per file, in alphabetical order.
 - Group chapters into **books** (e.g. one per opening). A book is for one side; it can be switched off and reviewed on its own.
 - Import a **lichess study** as a book (or into a book): each study chapter for the book’s side becomes a chapter, each variation a line (import it again as a book of the other side for its other chapters). The book keeps the link to the study, so you can sync it after editing it on lichess (lines you added, your progress and switches are kept). Private studies need a lichess login.
 - Import a PGN as a new chapter or into an existing one: each game becomes a line titled with its Event (games with variations are split into one line per variation). You can also add lines from the explorer.

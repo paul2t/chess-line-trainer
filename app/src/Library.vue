@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import StudyImport from './StudyImport.vue';
+import { isZip, readZipPgns, type ZipPgn } from './zip';
 import { planBookSync, applySync, planSummary, planIsEmpty, checkStudies } from './study';
 import {
   state, library, allLines, importPgn, removeChapter, renameChapter, removeLine, renameLine, setChapterColor, setChapterDisabled, moveLine, moveChapter, createChapter, isOff,
@@ -235,9 +236,57 @@ async function onFiles(ev: Event) {
   const files = (ev.target as HTMLInputElement).files;
   if (!files) return;
   const list: Pending[] = [];
-  for (const f of Array.from(files)) list.push(pend(f.name.replace(/\.pgn$/i, '').replace(/_/g, ' '), await f.text()));
+  const zips: ZipBook[] = [];
+  for (const f of Array.from(files)) {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    if (isZip(bytes)) {
+      try {
+        const pgns = readZipPgns(bytes);
+        if (pgns.length) zips.push(zipBook(f.name.replace(/\.zip$/i, '').replace(/_/g, ' '), pgns));
+        else emit('toast', `${f.name}: no .pgn file in this zip`);
+      } catch (e) {
+        emit('toast', `${f.name}: could not read the zip (${(e as Error).message})`);
+      }
+    } else list.push(pend(f.name.replace(/\.pgn$/i, '').replace(/_/g, ' '), new TextDecoder().decode(bytes)));
+  }
   (ev.target as HTMLInputElement).value = '';
   pending.value = list;
+  zipPending.value = zips;
+}
+
+/* ---------- zip of PGN files → a book (one chapter per file, alphabetical order) ---------- */
+interface ZipBook { name: string; color: Color; target: string /* 'new' or book id */; files: (ZipPgn & { include: boolean; games: number })[] }
+const zipPending = ref<ZipBook[]>([]);
+function zipBook(name: string, pgns: ZipPgn[]): ZipBook {
+  const files = pgns.map((p) => ({ ...p, include: true, games: (p.text.match(/\[Event /g) ?? []).length || 1 }));
+  const black = pgns.filter((p) => guessColor(p.text).color === 'b').length;
+  const into = state.books.find((b) => b.id === importBook.value);
+  return { name, color: into?.color ?? (black > pgns.length / 2 ? 'b' : black === pgns.length / 2 ? tab.value : 'w'), target: into?.id ?? 'new', files };
+}
+function zipTarget(z: ZipBook) {
+  const b = state.books.find((x) => x.id === z.target);
+  if (b) z.color = b.color;
+}
+function confirmZip() {
+  const msgs: string[] = [];
+  for (const z of zipPending.value) {
+    const files = z.files.filter((f) => f.include);
+    if (!files.length) continue;
+    const book = state.books.find((b) => b.id === z.target) ?? createBook(z.name.trim() || 'Book', z.color);
+    let lines = 0;
+    for (const f of files) {
+      // A chapter of the same name already in the book gets the file's new lines (no duplicate chapter).
+      const same = state.chapters.find((c) => c.book === book.id && c.name === f.name);
+      lines += importPgn(f.text, same ? { kind: 'existing', chapterId: same.id } : { kind: 'new', name: f.name || 'Chapter', color: book.color, book: book.id }).added;
+    }
+    collapsed.delete(book.id);
+    state.settings.libraryTab = book.color;
+    msgs.push(`“${book.name}”: ${files.length} chapter${files.length === 1 ? '' : 's'}, ${lines} line${lines === 1 ? '' : 's'}`);
+  }
+  zipPending.value = [];
+  importBook.value = '';
+  now.value = Date.now();
+  if (msgs.length) emit('toast', msgs.join('\n'));
 }
 function pasteNext() {
   if (!paste.text.trim()) return;
@@ -651,6 +700,40 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       </div>
     </div>
 
+    <div v-if="zipPending.length" class="modal-bg">
+      <div class="modal card">
+        <h3>Import {{ zipPending.length === 1 ? 'a zip' : zipPending.length + ' zips' }} as a book</h3>
+        <p class="small muted">Each PGN file becomes a chapter, in alphabetical order; each game in it a line.</p>
+        <div v-for="(z, i) in zipPending" :key="i" class="pend-block zip-block">
+          <label class="pick-label">Into</label>
+          <select class="inp" v-model="z.target" @change="zipTarget(z)">
+            <option value="new">➕ New book</option>
+            <option v-for="b in state.books" :key="b.id" :value="b.id">📚 {{ b.color === 'w' ? '♔' : '♚' }} {{ b.name }}</option>
+          </select>
+          <template v-if="z.target === 'new'">
+            <input class="inp" v-model="z.name" placeholder="Book name" />
+            <div class="seg">
+              <button :class="{ on: z.color === 'w' }" @click="z.color = 'w'">♔ I play White</button>
+              <button :class="{ on: z.color === 'b' }" @click="z.color = 'b'">♚ I play Black</button>
+            </div>
+          </template>
+          <p v-else class="small muted">You play {{ z.color === 'w' ? 'White' : 'Black' }} in this book; new chapters are added after its current ones, files named like one of its chapters add their new lines to it.</p>
+          <label class="pick-label">Chapters <span class="muted">({{ z.files.filter((f) => f.include).length }} of {{ z.files.length }})</span></label>
+          <div v-for="f in z.files" :key="f.name" :class="['schap', { off: !f.include }]">
+            <span :class="['cb', f.include ? 'all' : 'none']" @click="f.include = !f.include"></span>
+            <div class="schap-main" @click="f.include = !f.include">
+              <div>{{ f.name }}</div>
+              <div class="small muted">{{ f.games }} game{{ f.games === 1 ? '' : 's' }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="row2">
+          <button class="btn wide" @click="zipPending = []; importBook = ''">Cancel</button>
+          <button class="btn primary wide" @click="confirmZip">Import</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="menu" class="modal-bg" @click.self="menu = null">
       <div class="modal card sheet">
         <template v-if="menu.kind === 'chapter'">
@@ -680,7 +763,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
           <button class="btn wide" @click="selectBook(menu.s)">☑ Train only this book</button>
           <button v-if="menu.s.book!.studies?.length" class="btn wide" @click="syncBook(menu.s.book!)">⟳ Sync with lichess ({{ menu.s.book!.studies.map((x) => x.name).join(', ') }})</button>
           <button class="btn wide" @click="openStudy(menu.s.book!)">♞ Import a lichess study into it</button>
-          <button class="btn wide" @click="importPgnInto(menu.s.book!)">＋ Import PGN into it</button>
+          <button class="btn wide" @click="importPgnInto(menu.s.book!)">＋ Import PGN or zip into it</button>
           <button class="btn wide" @click="renameBk(menu.s.book!)">✎ Rename</button>
           <button class="btn wide" @click="copyBook(menu.s)">⧉ Copy as PGN</button>
           <button class="btn wide danger" @click="menu = { kind: 'bookdel', b: menu.s.book! }">🗑 Delete book…</button>
@@ -695,7 +778,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
         </template>
         <template v-else-if="menu.kind === 'add'">
           <h3>Add to your {{ sideName }} repertoire</h3>
-          <button class="btn wide" @click="menu = null; importBook = ''; fileInput?.click()">＋ Import PGN files</button>
+          <button class="btn wide" @click="menu = null; importBook = ''; fileInput?.click()">＋ Import PGN or zip files</button>
           <button class="btn wide" @click="menu = null; paste.show = true">📋 Paste PGN</button>
           <button class="btn wide" @click="openStudy()">♞ Import a lichess study</button>
           <button class="btn wide" @click="newBook">📚 New book</button>
@@ -716,7 +799,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
 
     <div v-if="!library.length && !state.books.length" class="empty card">
       <p><b>No chapter yet.</b></p>
-      <p>Tap <b>+ Add</b> to import .pgn files (each becomes a chapter, each game in it a line to train) or a lichess study. Group chapters into books, e.g. one book per opening. You can also add lines from the explorer.</p>
+      <p>Tap <b>+ Add</b> to import .pgn files (each becomes a chapter, each game in it a line to train), a .zip of PGN files (a book) or a lichess study. Group chapters into books, e.g. one book per opening. You can also add lines from the explorer.</p>
     </div>
 
     <template v-if="reordering">
