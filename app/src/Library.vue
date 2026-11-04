@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import StudyImport from './StudyImport.vue';
 import { planBookSync, applySync, planSummary, planIsEmpty, checkStudies } from './study';
 import {
@@ -306,6 +306,15 @@ const collapsed = reactive(new Set<string>());
 const toggleBook = (id: string) => (collapsed.has(id) ? collapsed.delete(id) : collapsed.add(id));
 const showStudy = ref(false);
 const studyBook = ref<string | undefined>(undefined);
+/** Open the study import on "My studies" (after coming back from the lichess login). */
+const studyMine = ref(false);
+watch(() => lichess.resume, (r) => {
+  if (r?.kind !== 'studies') return;
+  lichess.resume = null;
+  studyBook.value = state.books.some((b) => b.id === r.book) ? r.book : undefined;
+  studyMine.value = true;
+  showStudy.value = true;
+}, { immediate: true });
 const syncing = ref('');
 
 async function newBook() {
@@ -342,6 +351,7 @@ function importPgnInto(b: Book) {
 function openStudy(b?: Book) {
   menu.value = null;
   studyBook.value = b?.id;
+  studyMine.value = false;
   showStudy.value = true;
 }
 function studyDone(bookId: string, msg: string) {
@@ -702,7 +712,7 @@ defineExpose({ refresh: () => (now.value = Date.now()) });
       </div>
     </div>
 
-    <StudyImport v-if="showStudy" :book-id="studyBook" @close="showStudy = false" @done="studyDone" />
+    <StudyImport v-if="showStudy" :book-id="studyBook" :auto-mine="studyMine" @close="showStudy = false" @done="studyDone" />
 
     <div v-if="!library.length && !state.books.length" class="empty card">
       <p><b>No chapter yet.</b></p>

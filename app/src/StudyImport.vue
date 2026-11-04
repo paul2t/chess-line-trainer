@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import type { Color } from './pgn';
 import { state } from './store';
 import { lichess, login, studyAccess } from './lichess';
 import { fetchStudy, myStudies, parseStudyId, planSync, applySync, planSummary, studySide, includeSide, type Study } from './study';
 
-const props = defineProps<{ bookId?: string }>();
+const props = defineProps<{ bookId?: string; autoMine?: boolean }>();
 const emit = defineEmits<{ (e: 'close'): void; (e: 'done', bookId: string, msg: string): void }>();
 
 const input = ref('');
@@ -47,6 +47,9 @@ async function loadMine() {
   try { mine.value = await myStudies(); } catch (e) { error.value = (e as Error).message; } finally { busy.value = false; }
 }
 
+onMounted(() => { if (props.autoMine && lichess.token) loadMine(); });
+const connect = () => login({ kind: 'studies', book: props.bookId });
+
 const included = computed(() => study.value?.chapters.filter((c) => c.include) ?? []);
 const alreadyLinked = computed(() => !!study.value && state.chapters.some((c) => c.src?.study === study.value!.id));
 
@@ -72,9 +75,10 @@ const day = (t: number) => (t ? new Date(t).toLocaleDateString() : '');
           <button class="btn primary wide" :disabled="busy" @click="load()">{{ busy ? 'Loading…' : 'Load study' }}</button>
           <button v-if="lichess.token" class="btn wide" :disabled="busy" @click="loadMine">My studies</button>
         </div>
-        <p v-if="!lichess.token" class="small muted">Public studies work without logging in. For your private or unlisted studies, log in to lichess in Settings.</p>
+        <p v-if="!lichess.token" class="small muted">Public studies work without logging in. To pick from your studies (private and unlisted ones too):
+          <button class="btn sm" @click="connect">Log in with lichess</button></p>
         <p v-else-if="studyAccess === false" class="small muted">Your lichess login only allows public studies.
-          <button class="btn sm" @click="login">Allow access to my studies</button></p>
+          <button class="btn sm" @click="connect">Allow access to my studies</button></p>
         <div v-if="mine" class="study-list">
           <p v-if="!mine.length" class="small muted">No study found on your account.</p>
           <button v-for="s in mine" :key="s.id" class="btn wide" @click="load(s.id)">{{ s.name }} <span class="muted small">· {{ day(s.updatedAt) }}</span></button>

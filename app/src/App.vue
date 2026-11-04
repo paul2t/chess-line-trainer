@@ -293,6 +293,13 @@ const lichessStatus = computed(() => {
   return `${lichess.status === 'paused' ? 'Paused (app in background)' : 'Downloading'}: ${lichess.done}/${lichess.total} positions (${pct}%) · about ${Math.ceil((left * 3.3) / 60)} min left` + (lichess.message ? ' — ' + lichess.message : '');
 });
 onMounted(() => initLichess(toast));
+// Back from the lichess login: return to the page it was started from (the library handles study imports).
+watch(() => lichess.resume, (r) => {
+  if (r?.kind !== 'page') return;
+  lichess.resume = null;
+  const v = r.hash.slice(1).split('?')[0];
+  if (v === 'settings' || v === 'search') view.value = v as View;
+});
 
 const storageKb = computed(() => {
   void state.stats; void state.chapters;
@@ -416,12 +423,12 @@ const storageKb = computed(() => {
             <template v-if="studyAccess">♞ Your private and unlisted studies can be imported ✓</template>
             <template v-else>
               <span class="muted">♞ This login can only import public studies.</span>
-              <button class="btn sm primary" @click="login">Allow access to my studies</button>
+              <button class="btn sm primary" @click="login()">Allow access to my studies</button>
             </template>
           </div>
           <p class="small muted" v-if="lichess.token && lichess.message">{{ lichess.message }}</p>
           <template v-else>
-            <button class="btn primary wide" @click="login">Log in with lichess</button>
+            <button class="btn primary wide" @click="login()">Log in with lichess</button>
             <p class="small muted" v-if="lichess.message">{{ lichess.message }}</p>
             <details class="small">
               <summary class="muted">or paste a token</summary>

@@ -21,6 +21,10 @@ const CLIENT_ID = 'chess-line-trainer';
 const K_TOKEN = 'clt.lichess.token.v1';
 const K_CACHE = 'clt.explorer.v1';
 const K_PKCE = 'clt.lichess.pkce.v1';
+const K_RESUME = 'clt.lichess.resume.v1';
+
+/** What to reopen after coming back from the lichess login page. */
+export type Resume = { kind: 'page'; hash: string } | { kind: 'studies'; book?: string };
 const REFRESH_MS = 30 * 86400000;
 const GAP_MS = Number(lsGet('clt.test.gap')) || 3200; // ≈ 19 requests per minute (overridable for tests)
 
@@ -29,6 +33,8 @@ const GAP_MS = Number(lsGet('clt.test.gap')) || 3200; // ≈ 19 requests per min
 export const lichess = reactive({
   token: lsGet(K_TOKEN) ?? '',
   user: '',
+  /** Set after a login round trip: what the user was doing before (handled by the UI, then cleared). */
+  resume: null as Resume | null,
   /** Permissions of the token (comma separated), null = unknown yet. */
   scopes: null as string | null,
   status: 'idle' as 'idle' | 'running' | 'paused' | 'done' | 'error' | 'noauth' | 'blocked',
@@ -55,7 +61,7 @@ function b64url(bytes: Uint8Array): string {
 const redirectUri = () => location.origin + location.pathname;
 
 /** Redirect to lichess to log in (OAuth 2 PKCE; study:read = your private and unlisted studies, read-only). */
-export async function login() {
+export async function login(resume?: Resume) {
   if (!crypto?.subtle || location.protocol !== 'https:') {
     lichess.message = 'Lichess login needs the page to be opened from its web address (https). Paste a token instead.';
     return;
@@ -64,6 +70,7 @@ export async function login() {
   const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
   const st = b64url(crypto.getRandomValues(new Uint8Array(12)));
   lsSet(K_PKCE, JSON.stringify({ verifier, state: st }));
+  lsSet(K_RESUME, JSON.stringify(resume ?? { kind: 'page', hash: location.hash }));
   const q = new URLSearchParams({
     response_type: 'code', client_id: CLIENT_ID, redirect_uri: redirectUri(),
     code_challenge_method: 'S256', code_challenge: challenge, state: st, scope: 'study:read',
@@ -345,7 +352,14 @@ export function refreshAll() {
 }
 
 export function initLichess(toast: (m: string) => void) {
-  completeLogin().then((m) => { if (m) toast(m); });
+  completeLogin().then((m) => {
+    if (!m) return;
+    toast(m);
+    // Back from lichess: reopen what the user was doing.
+    const r = JSON.parse(lsGet(K_RESUME) || 'null') as Resume | null;
+    lsSet(K_RESUME, null);
+    if (r) lichess.resume = r;
+  });
   if (lichess.token) fetchUser();
   // New lines, re-enabled lines, or changed filters: fetch what's missing.
   let t = 0;
